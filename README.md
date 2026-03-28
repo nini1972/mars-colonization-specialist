@@ -1,6 +1,6 @@
 # Mars Colonization Preparation Specialist
 
-Phases 0-6 baseline for deterministic, testable implementation.
+Phases 0-7 baseline for deterministic, testable implementation.
 
 ## Quick start (PowerShell)
 
@@ -18,3 +18,4 @@ Phases 0-6 baseline for deterministic, testable implementation.
 - Phase 4: Central planner, mission-phase state machine, coupling checks, and replanning loop.
 - Phase 5: Simulation IR/compiler, scenario suite, and generate-test-repair validation pipeline.
 - Phase 6: Governance hard gate, audit trail export, benchmark deltas, and release hardening.
+- Phase 7: MCP adapter package with contract tests ensuring parity with standalone pipelines.
