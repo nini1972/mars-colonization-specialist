@@ -1,6 +1,6 @@
 # Mars Colonization Preparation Specialist
 
-Phases 0-5 baseline for deterministic, testable implementation.
+Phases 0-6 baseline for deterministic, testable implementation.
 
 ## Quick start (PowerShell)
 
@@ -17,3 +17,4 @@ Phases 0-5 baseline for deterministic, testable implementation.
 - Phase 3: First specialist modules (ECLSS, ISRU, Power) with shared typed I/O contracts.
 - Phase 4: Central planner, mission-phase state machine, coupling checks, and replanning loop.
 - Phase 5: Simulation IR/compiler, scenario suite, and generate-test-repair validation pipeline.
+- Phase 6: Governance hard gate, audit trail export, benchmark deltas, and release hardening.
