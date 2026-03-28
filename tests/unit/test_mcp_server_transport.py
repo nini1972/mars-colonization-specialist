@@ -148,6 +148,85 @@ def _call_tool_stdio_sync(
     return anyio.run(_runner)
 
 
+async def _run_stdio_pipeline(
+    goal_payload: dict[str, object],
+    evidence_payload: list[dict[str, object]],
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult]:
+    """Run all 4 tools sequentially in a single server process and return their results."""
+    env = _server_env()
+    if env_overrides:
+        env.update(env_overrides)
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "mars_agent.mcp"],
+        env=env,
+        cwd=_repo_root(),
+    )
+    async with stdio_client(params) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+
+            plan_result = await session.call_tool(
+                "mars.plan",
+                {
+                    "goal": goal_payload,
+                    "evidence": evidence_payload,
+                    "request_id": "req-parity-plan",
+                },
+            )
+            plan_content = plan_result.structuredContent
+            assert isinstance(plan_content, dict), "mars.plan must return structured content"
+            plan_id = plan_content["plan_id"]
+            assert isinstance(plan_id, str)
+
+            sim_result = await session.call_tool(
+                "mars.simulate",
+                {
+                    "plan_id": plan_id,
+                    "seed": 42,
+                    "max_repair_attempts": 2,
+                    "request_id": "req-parity-sim",
+                },
+            )
+            sim_content = sim_result.structuredContent
+            assert isinstance(sim_content, dict), "mars.simulate must return structured content"
+            sim_id = sim_content["simulation_id"]
+            assert isinstance(sim_id, str)
+
+            gov_result = await session.call_tool(
+                "mars.governance",
+                {
+                    "plan_id": plan_id,
+                    "simulation_id": sim_id,
+                    "min_confidence": 0.75,
+                    "request_id": "req-parity-gov",
+                },
+            )
+            bench_result = await session.call_tool(
+                "mars.benchmark",
+                {
+                    "plan_id": plan_id,
+                    "simulation_id": sim_id,
+                    "request_id": "req-parity-bench",
+                },
+            )
+
+            return plan_result, sim_result, gov_result, bench_result
+
+
+def _run_stdio_pipeline_sync(
+    goal_payload: dict[str, object],
+    evidence_payload: list[dict[str, object]],
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult]:
+    async def _runner() -> tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult]:
+        return await _run_stdio_pipeline(goal_payload, evidence_payload, env_overrides)
+
+    return anyio.run(_runner)
+
+
 def _tool_error_text(result: CallToolResult) -> str:
     return "\n".join(
         block.text
@@ -420,3 +499,63 @@ def test_transport_stdio_auth_valid_token_and_permission_preserves_success_shape
     assert isinstance(structured, dict)
     assert structured["request_id"] == "req-auth-ok"
     assert _normalize_payload(_unwrap_success(structured)) == _normalize_payload(expected)
+
+
+def test_transport_stdio_full_pipeline_parity_matches_adapter() -> None:
+    """Full 4-tool sequential pipeline over a single stdio session equals adapter.invoke()."""
+    goal = _goal()
+    evidence = _evidence()
+    goal_payload = _goal_payload(goal)
+    evidence_payload = _evidence_payload(evidence)
+
+    # Run the reference pipeline directly via the adapter
+    adapter = MarsMCPAdapter()
+    ref_plan = adapter.invoke("mars.plan", {"goal": goal_payload, "evidence": evidence_payload})
+    ref_plan_id = ref_plan["plan_id"]
+    assert isinstance(ref_plan_id, str)
+
+    ref_sim = adapter.invoke(
+        "mars.simulate",
+        {"plan_id": ref_plan_id, "seed": 42, "max_repair_attempts": 2},
+    )
+    ref_sim_id = ref_sim["simulation_id"]
+    assert isinstance(ref_sim_id, str)
+
+    ref_gov = adapter.invoke(
+        "mars.governance",
+        {"plan_id": ref_plan_id, "simulation_id": ref_sim_id, "min_confidence": 0.75},
+    )
+    ref_bench = adapter.invoke(
+        "mars.benchmark",
+        {"plan_id": ref_plan_id, "simulation_id": ref_sim_id},
+    )
+
+    # Run the same pipeline over a single stdio server process
+    plan_r, sim_r, gov_r, bench_r = _run_stdio_pipeline_sync(goal_payload, evidence_payload)
+
+    # All four calls must succeed
+    assert plan_r.isError is False
+    assert sim_r.isError is False
+    assert gov_r.isError is False
+    assert bench_r.isError is False
+
+    # request_id echo for each call
+    plan_content = plan_r.structuredContent
+    sim_content = sim_r.structuredContent
+    gov_content = gov_r.structuredContent
+    bench_content = bench_r.structuredContent
+    assert isinstance(plan_content, dict)
+    assert isinstance(sim_content, dict)
+    assert isinstance(gov_content, dict)
+    assert isinstance(bench_content, dict)
+
+    assert plan_content["request_id"] == "req-parity-plan"
+    assert sim_content["request_id"] == "req-parity-sim"
+    assert gov_content["request_id"] == "req-parity-gov"
+    assert bench_content["request_id"] == "req-parity-bench"
+
+    # Payload equality: stdio output matches adapter output (ignoring ok/request_id/created_at)
+    assert _normalize_payload(_unwrap_success(plan_content)) == _normalize_payload(ref_plan)
+    assert _normalize_payload(_unwrap_success(sim_content)) == _normalize_payload(ref_sim)
+    assert _normalize_payload(_unwrap_success(gov_content)) == _normalize_payload(ref_gov)
+    assert _normalize_payload(_unwrap_success(bench_content)) == _normalize_payload(ref_bench)
