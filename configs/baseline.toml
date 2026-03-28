@@ -1,0 +1,5 @@
+[app]
+name = "mars-colonization-agent"
+
+[runtime]
+random_seed = 424242

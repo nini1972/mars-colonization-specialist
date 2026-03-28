@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: mars-colonization-agent
+Version: 0.1.0
+Summary: Mars Colonization Preparation Specialist - Phase 0 baseline
+Author: Mars Team
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+Requires-Dist: mypy>=1.10.0; extra == "dev"
+
+# Mars Colonization Preparation Specialist
+
+Phase 0 project baseline for deterministic, testable implementation.
+
+## Quick start (PowerShell)
+
+```powershell
+./scripts/setup.ps1
+./scripts/check.ps1
+```

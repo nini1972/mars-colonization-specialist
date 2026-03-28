@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/mars_agent/__init__.py
+src/mars_agent/config.py
+src/mars_agent/randomness.py
+src/mars_colonization_agent.egg-info/PKG-INFO
+src/mars_colonization_agent.egg-info/SOURCES.txt
+src/mars_colonization_agent.egg-info/dependency_links.txt
+src/mars_colonization_agent.egg-info/requires.txt
+src/mars_colonization_agent.egg-info/top_level.txt
