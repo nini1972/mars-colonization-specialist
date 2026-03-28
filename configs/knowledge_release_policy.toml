@@ -1,0 +1,8 @@
+[release]
+quarterly_window = "Q1,Q2,Q3,Q4"
+hotfix_lane_enabled = true
+
+[governance]
+require_provenance = true
+require_confidence_score = true
+require_validation_gate = true
