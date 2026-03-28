@@ -19,3 +19,8 @@ Phases 0-7 baseline for deterministic, testable implementation.
 - Phase 5: Simulation IR/compiler, scenario suite, and generate-test-repair validation pipeline.
 - Phase 6: Governance hard gate, audit trail export, benchmark deltas, and release hardening.
 - Phase 7: MCP adapter package with contract tests ensuring parity with standalone pipelines.
+
+## Next
+
+- Phase 8 scope defined: transport-level MCP server exposure, authZ/authN controls, and observability hardening.
+- See `docs/phase8-transport-auth-observability-scope.md`.
