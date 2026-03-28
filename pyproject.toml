@@ -9,7 +9,10 @@ description = "Mars Colonization Preparation Specialist - Phase 0 baseline"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Mars Team" }]
-dependencies = []
+dependencies = [
+  "mcp>=1.0",
+  "pydantic>=2.0",
+]
 
 [project.optional-dependencies]
 dev = [
