@@ -6,38 +6,41 @@ Move from protocol-shaped in-process adapter calls to production-ready MCP servi
 
 ## Workstreams
 
-### 1) Transport layer and server runtime
+### 1) Transport layer and server runtime ✅
 
-- Introduce a thin MCP server runtime wrapper around the existing `MarsMCPAdapter` tool surface.
-- Support deterministic request handling with explicit request IDs and structured error responses.
-- Preserve Phase 7 tool names and argument contracts to avoid client breakage.
-
-Acceptance criteria:
-
-- All Phase 7 tools (`mars.plan`, `mars.simulate`, `mars.governance`, `mars.benchmark`) are available through server transport.
-- Contract tests validate parity between direct adapter calls and transport-exposed calls.
-
-### 2) Authentication and authorization
-
-- Add token-based authentication for MCP tool invocation.
-- Add policy checks for tool-level authorization (least-privilege by tool name).
-- Introduce secure configuration loading for credentials and token validation settings.
+- Introduced FastMCP server runtime wrapping `MarsMCPAdapter` (`src/mars_agent/mcp/server.py`).
+- Deterministic request IDs, structured JSON ToolError payload with `schema_version: "1.0"`.
+- MCP Error Payload Contract documented in README.
 
 Acceptance criteria:
 
-- Unauthorized requests receive deterministic access-denied responses.
-- Authorized requests continue to produce outputs matching Phase 7 behavior.
+- ✅ All Phase 7 tools (`mars.plan`, `mars.simulate`, `mars.governance`, `mars.benchmark`) available through server transport.
+- ✅ Contract tests validate parity between direct adapter calls and transport-exposed calls, including full 4-tool sequential stdio pipeline parity test (`test_transport_stdio_full_pipeline_parity_matches_adapter`).
 
-### 3) Observability and diagnostics
+### 2) Authentication and authorization ✅
 
-- Add structured logs with mission ID, tool name, latency, and outcome status.
-- Add lightweight metrics counters/timers for success/failure/latency per tool.
-- Add correlation IDs spanning plan->simulate->governance/benchmark flow.
+- Env-driven token auth: `MARS_MCP_AUTH_ENABLED`, `MARS_MCP_AUTH_TOKEN`, `MARS_MCP_AUTH_PERMISSIONS`.
+- Per-tool authorization with `unauthenticated` / `forbidden` error codes in the standard ToolError payload.
+- Bearer token extracted from MCP request context metadata (`authorization` key) or optional `auth_token` tool parameter.
+- Auth documented in README under "MCP Auth (Workstream 2)".
 
 Acceptance criteria:
 
-- Tool invocations emit traceable logs and basic metrics.
-- Failure paths are diagnosable from logs without reproducing locally.
+- ✅ Unauthorized requests receive deterministic access-denied responses with `schema_version: "1.0"` payload.
+- ✅ Authorized requests produce outputs matching Phase 7 behavior (verified by auth transport tests).
+
+### 3) Observability and diagnostics ✅
+
+- Structured stderr JSON logs for `tool.start`, `tool.success`, and `tool.error` events.
+- Stable log fields include: `event`, `tool`, `request_id`, `correlation_id`, `mission_id`, `outcome`, `latency_ms`, `auth_enabled`, `error_code`.
+- Flow-aware correlation ID propagation across `plan -> simulate -> governance/benchmark` with in-memory linkage maps.
+- Lightweight in-process per-tool metrics: `calls`, `successes`, `failures`, `auth_failures`, `total_latency_ms`.
+- Best-effort FastMCP progress notifications and client log notifications during tool execution.
+
+Acceptance criteria:
+
+- ✅ Tool invocations emit traceable logs and basic metrics without changing success or ToolError payload contracts.
+- ✅ Failure paths are diagnosable from logs (including auth failures with explicit `error_code`).
 
 ### 4) Reliability hardening
 

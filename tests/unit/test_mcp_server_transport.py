@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from collections.abc import Coroutine
 from datetime import date
 from enum import Enum
 from pathlib import Path
@@ -9,7 +10,8 @@ import anyio
 import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.types import CallToolResult
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, LoggingMessageNotificationParams
 
 pytest.importorskip("mcp.server.fastmcp")
 
@@ -148,6 +150,13 @@ def _call_tool_stdio_sync(
     return anyio.run(_runner)
 
 
+def _call_direct_sync(coro: Coroutine[object, object, dict[str, object]]) -> dict[str, object]:
+    async def _runner() -> dict[str, object]:
+        return await coro
+
+    return anyio.run(_runner)
+
+
 async def _run_stdio_pipeline(
     goal_payload: dict[str, object],
     evidence_payload: list[dict[str, object]],
@@ -216,6 +225,99 @@ async def _run_stdio_pipeline(
             return plan_result, sim_result, gov_result, bench_result
 
 
+async def _run_stdio_pipeline_with_observability(
+    goal_payload: dict[str, object],
+    evidence_payload: list[dict[str, object]],
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[
+    tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult],
+    list[tuple[float, float | None, str | None]],
+    list[str],
+]:
+    env = _server_env()
+    if env_overrides:
+        env.update(env_overrides)
+
+    progress_events: list[tuple[float, float | None, str | None]] = []
+    log_messages: list[str] = []
+
+    async def _on_progress(progress: float, total: float | None, message: str | None) -> None:
+        progress_events.append((progress, total, message))
+
+    async def _on_log(params: LoggingMessageNotificationParams) -> None:
+        data = params.data
+        log_messages.append(data if isinstance(data, str) else str(data))
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "mars_agent.mcp"],
+        env=env,
+        cwd=_repo_root(),
+    )
+    async with stdio_client(params) as (read_stream, write_stream):
+        async with ClientSession(
+            read_stream,
+            write_stream,
+            logging_callback=_on_log,
+        ) as session:
+            await session.initialize()
+
+            plan_result = await session.call_tool(
+                "mars.plan",
+                {
+                    "goal": goal_payload,
+                    "evidence": evidence_payload,
+                    "request_id": "req-observe-plan",
+                },
+                progress_callback=_on_progress,
+            )
+            plan_content = plan_result.structuredContent
+            assert isinstance(plan_content, dict)
+            plan_id = plan_content["plan_id"]
+            assert isinstance(plan_id, str)
+
+            sim_result = await session.call_tool(
+                "mars.simulate",
+                {
+                    "plan_id": plan_id,
+                    "seed": 42,
+                    "max_repair_attempts": 2,
+                    "request_id": "req-observe-sim",
+                },
+                progress_callback=_on_progress,
+            )
+            sim_content = sim_result.structuredContent
+            assert isinstance(sim_content, dict)
+            sim_id = sim_content["simulation_id"]
+            assert isinstance(sim_id, str)
+
+            gov_result = await session.call_tool(
+                "mars.governance",
+                {
+                    "plan_id": plan_id,
+                    "simulation_id": sim_id,
+                    "min_confidence": 0.75,
+                    "request_id": "req-observe-gov",
+                },
+                progress_callback=_on_progress,
+            )
+            bench_result = await session.call_tool(
+                "mars.benchmark",
+                {
+                    "plan_id": plan_id,
+                    "simulation_id": sim_id,
+                    "request_id": "req-observe-bench",
+                },
+                progress_callback=_on_progress,
+            )
+
+            return (
+                (plan_result, sim_result, gov_result, bench_result),
+                progress_events,
+                log_messages,
+            )
+
+
 def _run_stdio_pipeline_sync(
     goal_payload: dict[str, object],
     evidence_payload: list[dict[str, object]],
@@ -223,6 +325,29 @@ def _run_stdio_pipeline_sync(
 ) -> tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult]:
     async def _runner() -> tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult]:
         return await _run_stdio_pipeline(goal_payload, evidence_payload, env_overrides)
+
+    return anyio.run(_runner)
+
+
+def _run_stdio_pipeline_with_observability_sync(
+    goal_payload: dict[str, object],
+    evidence_payload: list[dict[str, object]],
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[
+    tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult],
+    list[tuple[float, float | None, str | None]],
+    list[str],
+]:
+    async def _runner() -> tuple[
+        tuple[CallToolResult, CallToolResult, CallToolResult, CallToolResult],
+        list[tuple[float, float | None, str | None]],
+        list[str],
+    ]:
+        return await _run_stdio_pipeline_with_observability(
+            goal_payload,
+            evidence_payload,
+            env_overrides,
+        )
 
     return anyio.run(_runner)
 
@@ -256,10 +381,12 @@ def test_transport_plan_matches_adapter_invoke_output() -> None:
         },
     )
 
-    actual = mars_plan(
-        goal=_goal_payload(goal),
-        evidence=_evidence_payload(evidence),
-        request_id="req-direct-plan",
+    actual = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(goal),
+            evidence=_evidence_payload(evidence),
+            request_id="req-direct-plan",
+        )
     )
 
     assert actual["request_id"] == "req-direct-plan"
@@ -308,37 +435,45 @@ def test_transport_end_to_end_pipeline_matches_adapter_invoke_output() -> None:
         },
     )
 
-    actual_plan = mars_plan(
-        goal=_goal_payload(goal),
-        evidence=_evidence_payload(evidence),
-        request_id="req-direct-e2e-plan",
+    actual_plan = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(goal),
+            evidence=_evidence_payload(evidence),
+            request_id="req-direct-e2e-plan",
+        )
     )
     assert actual_plan["request_id"] == "req-direct-e2e-plan"
     plan_payload = _unwrap_success(actual_plan)
     actual_plan_id = plan_payload["plan_id"]
     assert isinstance(actual_plan_id, str)
 
-    actual_simulation = mars_simulate(
-        plan_id=actual_plan_id,
-        seed=42,
-        max_repair_attempts=2,
-        request_id="req-direct-e2e-sim",
+    actual_simulation = _call_direct_sync(
+        mars_simulate(
+            plan_id=actual_plan_id,
+            seed=42,
+            max_repair_attempts=2,
+            request_id="req-direct-e2e-sim",
+        )
     )
     assert actual_simulation["request_id"] == "req-direct-e2e-sim"
     simulation_payload = _unwrap_success(actual_simulation)
     actual_simulation_id = simulation_payload["simulation_id"]
     assert isinstance(actual_simulation_id, str)
 
-    actual_governance = mars_governance(
-        plan_id=actual_plan_id,
-        simulation_id=actual_simulation_id,
-        min_confidence=0.75,
-        request_id="req-direct-e2e-gov",
+    actual_governance = _call_direct_sync(
+        mars_governance(
+            plan_id=actual_plan_id,
+            simulation_id=actual_simulation_id,
+            min_confidence=0.75,
+            request_id="req-direct-e2e-gov",
+        )
     )
-    actual_benchmark = mars_benchmark(
-        plan_id=actual_plan_id,
-        simulation_id=actual_simulation_id,
-        request_id="req-direct-e2e-bench",
+    actual_benchmark = _call_direct_sync(
+        mars_benchmark(
+            plan_id=actual_plan_id,
+            simulation_id=actual_simulation_id,
+            request_id="req-direct-e2e-bench",
+        )
     )
 
     assert _normalize_payload(simulation_payload["simulation"]) == _normalize_payload(
@@ -559,3 +694,100 @@ def test_transport_stdio_full_pipeline_parity_matches_adapter() -> None:
     assert _normalize_payload(_unwrap_success(sim_content)) == _normalize_payload(ref_sim)
     assert _normalize_payload(_unwrap_success(gov_content)) == _normalize_payload(ref_gov)
     assert _normalize_payload(_unwrap_success(bench_content)) == _normalize_payload(ref_bench)
+
+
+def test_transport_stdio_progress_callback_emits_events() -> None:
+    goal_payload = _goal_payload(_goal())
+    evidence_payload = _evidence_payload(_evidence())
+
+    (_, progress_events, _) = _run_stdio_pipeline_with_observability_sync(
+        goal_payload,
+        evidence_payload,
+    )
+
+    assert progress_events
+    messages = [item[2] for item in progress_events if item[2] is not None]
+    assert any("mars.plan started" in message for message in messages)
+    assert any("mars.plan completed" in message for message in messages)
+
+
+def test_transport_stdio_correlation_id_propagates_across_pipeline() -> None:
+    goal_payload = _goal_payload(_goal())
+    evidence_payload = _evidence_payload(_evidence())
+
+    (_, _, log_messages) = _run_stdio_pipeline_with_observability_sync(
+        goal_payload,
+        evidence_payload,
+        env_overrides={
+            "MARS_MCP_AUTH_ENABLED": "false",
+        },
+    )
+
+    started_messages = [msg for msg in log_messages if " started request_id=" in msg]
+    assert len(started_messages) >= 4
+
+    def _corr(msg: str) -> str:
+        marker = "correlation_id="
+        idx = msg.find(marker)
+        assert idx >= 0
+        return msg[idx + len(marker) :].strip()
+
+    correlations = [_corr(msg) for msg in started_messages[:4]]
+    assert len(set(correlations)) == 1
+
+
+def test_observability_stderr_logs_have_stable_keys_and_no_token(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-observe-direct",
+            auth_token="secret-token",
+        )
+    )
+
+    captured = capsys.readouterr()
+    lines = [line for line in captured.err.splitlines() if line.strip().startswith("{")]
+    assert lines
+    parsed = [json.loads(line) for line in lines]
+    assert all(isinstance(item, dict) for item in parsed)
+
+    for item in parsed:
+        assert "event" in item
+        assert "tool" in item
+        assert "request_id" in item
+        assert "correlation_id" in item
+        assert "outcome" in item
+        assert "latency_ms" in item
+        assert "auth_enabled" in item
+        assert "error_code" in item
+
+    assert "secret-token" not in captured.err
+
+
+def test_observability_auth_failure_logs_error_code_and_outcome(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MARS_MCP_AUTH_ENABLED", "true")
+    monkeypatch.setenv("MARS_MCP_AUTH_TOKEN", "expected-token")
+
+    with pytest.raises(ToolError):
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-observe-auth-fail",
+            )
+        )
+
+    captured = capsys.readouterr()
+    lines = [line for line in captured.err.splitlines() if line.strip().startswith("{")]
+    assert lines
+    parsed = [json.loads(line) for line in lines]
+    error_events = [item for item in parsed if item.get("event") == "tool.error"]
+    assert error_events
+    assert any(item.get("outcome") == "failure" for item in error_events)
+    assert any(item.get("error_code") == "unauthenticated" for item in error_events)
