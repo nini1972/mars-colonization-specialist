@@ -1,0 +1,150 @@
+"""Power specialist module (generation, storage, balancing, dust degradation)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from mars_agent.reasoning import (
+    ForecastInput,
+    ForecastRequest,
+    GatePolicy,
+    GaussianMonteCarloForecaster,
+    GlobalValidationGate,
+    LowerBoundConstraint,
+    SymbolicRulesEngine,
+    UpperBoundConstraint,
+)
+from mars_agent.reasoning.models import DecisionRecord
+from mars_agent.specialists.contracts import (
+    ModuleMetric,
+    ModuleRequest,
+    ModuleResponse,
+    Subsystem,
+    UncertaintyBounds,
+)
+
+
+@dataclass(slots=True)
+class PowerSpecialist:
+    """Evaluates power generation/storage recommendations under uncertainty."""
+
+    forecaster: GaussianMonteCarloForecaster = field(
+        default_factory=lambda: GaussianMonteCarloForecaster(seed=123)
+    )
+
+    def analyze(self, request: ModuleRequest) -> ModuleResponse:
+        if request.subsystem is not Subsystem.POWER:
+            raise ValueError("PowerSpecialist only accepts POWER requests")
+
+        solar_generation_kw = request.get_input("solar_generation_kw").value.mean
+        battery_capacity_kwh = request.get_input("battery_capacity_kwh").value.mean
+        critical_load_kw = request.get_input("critical_load_kw").value.mean
+        dust_degradation_fraction = request.get_input("dust_degradation_fraction").value.mean
+        hours_without_sun = request.get_input("hours_without_sun").value.mean
+
+        forecast = self.forecaster.forecast(
+            ForecastRequest(
+                metric="effective_generation_kw",
+                confidence_level=request.desired_confidence,
+                inputs=(
+                    ForecastInput(
+                        name="solar_generation_kw",
+                        mean=solar_generation_kw,
+                        std_dev=max(0.2, solar_generation_kw * 0.1),
+                        minimum=0.0,
+                    ),
+                    ForecastInput(
+                        name="dust_loss_kw",
+                        mean=-solar_generation_kw * dust_degradation_fraction,
+                        std_dev=max(0.1, solar_generation_kw * 0.04),
+                    ),
+                ),
+            )
+        )
+
+        effective_generation_kw = forecast.expected_value
+        load_margin_kw = effective_generation_kw - critical_load_kw
+        storage_cover_hours = battery_capacity_kwh / max(critical_load_kw, 1e-6)
+
+        state = {
+            "dust_degradation_fraction": dust_degradation_fraction,
+            "load_margin_kw": load_margin_kw,
+            "storage_cover_hours": storage_cover_hours,
+            "hours_without_sun": hours_without_sun,
+        }
+
+        gate = GlobalValidationGate(
+            rules_engine=SymbolicRulesEngine(
+                constraints=(
+                    UpperBoundConstraint(
+                        constraint_id="power.dust_degradation.max",
+                        metric_key="dust_degradation_fraction",
+                        maximum=0.9,
+                    ),
+                    LowerBoundConstraint(
+                        constraint_id="power.load_margin.min",
+                        metric_key="load_margin_kw",
+                        minimum=0.0,
+                    ),
+                    LowerBoundConstraint(
+                        constraint_id="power.storage_cover.min",
+                        metric_key="storage_cover_hours",
+                        minimum=hours_without_sun,
+                    ),
+                )
+            ),
+            policy=GatePolicy(min_confidence=0.75, min_evidence_count=1),
+        )
+
+        decision = DecisionRecord(
+            decision_id="power.phase3.baseline",
+            subsystem=Subsystem.POWER.value,
+            recommendation=(
+                "Maintain positive load margin and battery coverage through dust events "
+                "before increasing discretionary loads."
+            ),
+            rationale="Preserves critical habitat services under degraded solar conditions.",
+            assumptions=(
+                "Critical load estimate captures ECLSS and ISRU essentials",
+                "Dust degradation remains within modeled bounds",
+            ),
+            evidence=request.evidence,
+            confidence=forecast.confidence_level,
+        )
+
+        gate_result = gate.evaluate(decision=decision, state=state, forecast=forecast)
+
+        return ModuleResponse(
+            subsystem=Subsystem.POWER,
+            decision=decision,
+            metrics=(
+                ModuleMetric(
+                    name="effective_generation_kw",
+                    value=UncertaintyBounds(
+                        mean=forecast.expected_value,
+                        lower=forecast.lower_bound,
+                        upper=forecast.upper_bound,
+                        unit="kW",
+                    ),
+                ),
+                ModuleMetric(
+                    name="load_margin_kw",
+                    value=UncertaintyBounds(
+                        mean=load_margin_kw,
+                        lower=forecast.lower_bound - critical_load_kw,
+                        upper=forecast.upper_bound - critical_load_kw,
+                        unit="kW",
+                    ),
+                ),
+                ModuleMetric(
+                    name="storage_cover_hours",
+                    value=UncertaintyBounds(
+                        mean=storage_cover_hours,
+                        lower=storage_cover_hours * 0.95,
+                        upper=storage_cover_hours * 1.05,
+                        unit="h",
+                    ),
+                ),
+            ),
+            gate=gate_result,
+        )
