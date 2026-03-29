@@ -1,9 +1,12 @@
 
+# Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
 
-#Ignore vscode AI rules
-.github\instructions\codacy.instructions.md
 __pycache__/
 *.pyc
-.codacy
+
+# Ignore Codacy workspace files
+.codacy/
 
 # Ignore the .vscode directory
+.vscode/
