@@ -714,6 +714,98 @@ def test_transport_direct_duplicate_request_id_conflict_returns_invalid_request(
     assert "already used" in str(error_payload["message"])
 
 
+def test_transport_direct_idempotency_ttl_expiration_allows_request_id_reuse_with_changed_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before_count = len(mcp_server._adapter._plans)
+
+    fake_now = {"value": 100.0}
+
+    def _fake_idempotency_now() -> float:
+        return fake_now["value"]
+
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_TTL_SECONDS", "0.5")
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_MAX_ENTRIES", "512")
+    monkeypatch.setattr(mcp_server, "_idempotency_now_seconds", _fake_idempotency_now)
+
+    original_goal = _goal_payload(_goal())
+    first = _call_direct_sync(
+        mars_plan(
+            goal=original_goal,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-ttl",
+        )
+    )
+
+    fake_now["value"] += 1.0
+
+    changed_goal = dict(original_goal)
+    changed_goal["crew_size"] = cast(int, original_goal["crew_size"]) + 3
+    second = _call_direct_sync(
+        mars_plan(
+            goal=changed_goal,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-ttl",
+        )
+    )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert len(mcp_server._adapter._plans) == before_count + 2
+
+
+def test_transport_direct_idempotency_max_entries_evicts_oldest_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before_count = len(mcp_server._adapter._plans)
+
+    fake_now = {"value": 200.0}
+
+    def _fake_idempotency_now() -> float:
+        return fake_now["value"]
+
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_TTL_SECONDS", "900")
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_MAX_ENTRIES", "1")
+    monkeypatch.setattr(mcp_server, "_idempotency_now_seconds", _fake_idempotency_now)
+
+    goal_a = _goal_payload(_goal())
+    _call_direct_sync(
+        mars_plan(
+            goal=goal_a,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-max-a",
+        )
+    )
+
+    fake_now["value"] += 1.0
+
+    goal_b = _goal_payload(_goal())
+    goal_b["crew_size"] = cast(int, goal_b["crew_size"]) + 7
+    _call_direct_sync(
+        mars_plan(
+            goal=goal_b,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-max-b",
+        )
+    )
+
+    fake_now["value"] += 1.0
+
+    reused_goal_a = dict(goal_a)
+    reused_goal_a["crew_size"] = cast(int, goal_a["crew_size"]) + 11
+    reused = _call_direct_sync(
+        mars_plan(
+            goal=reused_goal_a,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-max-a",
+        )
+    )
+
+    assert reused["ok"] is True
+    assert len(mcp_server._adapter._plans) == before_count + 3
+    assert len(mcp_server._COMPLETED_REQUESTS) <= 1
+
+
 def test_transport_direct_timeout_does_not_commit_state_and_allows_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

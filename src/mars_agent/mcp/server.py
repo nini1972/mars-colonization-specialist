@@ -42,6 +42,10 @@ _AUTH_ENABLED_ENV = "MARS_MCP_AUTH_ENABLED"
 _AUTH_TOKEN_ENV = "MARS_MCP_AUTH_TOKEN"
 _AUTH_PERMISSIONS_ENV = "MARS_MCP_AUTH_PERMISSIONS"
 _TOOL_TIMEOUT_SECONDS_ENV = "MARS_MCP_TOOL_TIMEOUT_SECONDS"
+_IDEMPOTENCY_TTL_SECONDS_ENV = "MARS_MCP_IDEMPOTENCY_TTL_SECONDS"
+_IDEMPOTENCY_MAX_ENTRIES_ENV = "MARS_MCP_IDEMPOTENCY_MAX_ENTRIES"
+_DEFAULT_IDEMPOTENCY_TTL_SECONDS = 900.0
+_DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
 _TOOL_METRIC_KEYS = ("calls", "successes", "failures", "auth_failures", "total_latency_ms")
 _ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark"}
 _TOOL_PERMISSION_BY_NAME = {
@@ -60,6 +64,7 @@ class _IdempotencyEntry:
     tool_name: str
     fingerprint: str
     response: dict[str, object]
+    completed_at_monotonic: float
 
 
 _COMPLETED_REQUESTS: dict[str, _IdempotencyEntry] = {}
@@ -161,6 +166,79 @@ def _configured_tool_timeout_seconds() -> float | None:
         )
 
     return timeout_seconds
+
+
+def _configured_idempotency_ttl_seconds() -> float:
+    raw = os.getenv(_IDEMPOTENCY_TTL_SECONDS_ENV)
+    if raw is None:
+        return _DEFAULT_IDEMPOTENCY_TTL_SECONDS
+
+    stripped = raw.strip()
+    if not stripped:
+        return _DEFAULT_IDEMPOTENCY_TTL_SECONDS
+
+    try:
+        ttl_seconds = float(stripped)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid {_IDEMPOTENCY_TTL_SECONDS_ENV} value: must be numeric"
+        ) from exc
+
+    if ttl_seconds <= 0:
+        raise RuntimeError(
+            f"Invalid {_IDEMPOTENCY_TTL_SECONDS_ENV} value: must be greater than zero"
+        )
+
+    return ttl_seconds
+
+
+def _configured_idempotency_max_entries() -> int:
+    raw = os.getenv(_IDEMPOTENCY_MAX_ENTRIES_ENV)
+    if raw is None:
+        return _DEFAULT_IDEMPOTENCY_MAX_ENTRIES
+
+    stripped = raw.strip()
+    if not stripped:
+        return _DEFAULT_IDEMPOTENCY_MAX_ENTRIES
+
+    try:
+        max_entries = int(stripped)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid {_IDEMPOTENCY_MAX_ENTRIES_ENV} value: must be an integer"
+        ) from exc
+
+    if max_entries <= 0:
+        raise RuntimeError(
+            f"Invalid {_IDEMPOTENCY_MAX_ENTRIES_ENV} value: must be greater than zero"
+        )
+
+    return max_entries
+
+
+def _idempotency_now_seconds() -> float:
+    return perf_counter()
+
+
+def _prune_completed_idempotency_entries(now: float | None = None) -> None:
+    resolved_now = _idempotency_now_seconds() if now is None else now
+    ttl_seconds = _configured_idempotency_ttl_seconds()
+    max_entries = _configured_idempotency_max_entries()
+
+    expired_request_ids = [
+        req_id
+        for req_id, entry in _COMPLETED_REQUESTS.items()
+        if (resolved_now - entry.completed_at_monotonic) > ttl_seconds
+    ]
+    for req_id in expired_request_ids:
+        _COMPLETED_REQUESTS.pop(req_id, None)
+
+    while len(_COMPLETED_REQUESTS) > max_entries:
+        oldest_request_id = min(
+            _COMPLETED_REQUESTS,
+            key=lambda req_id: _COMPLETED_REQUESTS[req_id].completed_at_monotonic,
+        )
+        _COMPLETED_REQUESTS.pop(oldest_request_id, None)
 
 
 def _request_meta_dict() -> dict[str, object]:
@@ -415,6 +493,7 @@ def _prepare_idempotent_request(
     tool_name: str,
     fingerprint: str,
 ) -> dict[str, object] | None:
+    _prune_completed_idempotency_entries()
     completed = _COMPLETED_REQUESTS.get(request_id)
     if completed is not None:
         if completed.tool_name != tool_name or completed.fingerprint != fingerprint:
@@ -447,7 +526,9 @@ def _complete_idempotent_request(
         tool_name=tool_name,
         fingerprint=fingerprint,
         response=deepcopy(response),
+        completed_at_monotonic=_idempotency_now_seconds(),
     )
+    _prune_completed_idempotency_entries()
 
 
 def _reset_in_flight_request(request_id: str) -> None:
