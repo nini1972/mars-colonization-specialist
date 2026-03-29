@@ -7,7 +7,7 @@ import os
 import sys
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any, TypeVar, cast
 from uuid import uuid4
@@ -29,6 +29,13 @@ from mars_agent.mcp.adapter import (
     _require_string,
     to_mcp_value,
 )
+from mars_agent.mcp.persistence import (
+    IdempotencyEntry,
+    PersistenceCorruptionError,
+    PersistenceSnapshot,
+    PersistenceUnavailableError,
+    SQLitePersistenceBackend,
+)
 from mars_agent.orchestration import MissionGoal
 from mars_agent.orchestration.models import PlanResult
 from mars_agent.reasoning.models import EvidenceReference
@@ -44,8 +51,13 @@ _AUTH_PERMISSIONS_ENV = "MARS_MCP_AUTH_PERMISSIONS"
 _TOOL_TIMEOUT_SECONDS_ENV = "MARS_MCP_TOOL_TIMEOUT_SECONDS"
 _IDEMPOTENCY_TTL_SECONDS_ENV = "MARS_MCP_IDEMPOTENCY_TTL_SECONDS"
 _IDEMPOTENCY_MAX_ENTRIES_ENV = "MARS_MCP_IDEMPOTENCY_MAX_ENTRIES"
+_PERSISTENCE_BACKEND_ENV = "MARS_MCP_PERSISTENCE_BACKEND"
+_PERSISTENCE_SQLITE_PATH_ENV = "MARS_MCP_PERSISTENCE_SQLITE_PATH"
+_PERSISTENCE_CORRUPTION_FALLBACK_ENV = "MARS_MCP_PERSISTENCE_FALLBACK_ON_CORRUPTION"
 _DEFAULT_IDEMPOTENCY_TTL_SECONDS = 900.0
 _DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
+_DEFAULT_PERSISTENCE_BACKEND = "memory"
+_DEFAULT_PERSISTENCE_SQLITE_PATH = ".mars_mcp_runtime.sqlite3"
 _TOOL_METRIC_KEYS = ("calls", "successes", "failures", "auth_failures", "total_latency_ms")
 _ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark"}
 _TOOL_PERMISSION_BY_NAME = {
@@ -59,16 +71,10 @@ _PLAN_CORRELATION_BY_ID: dict[str, str] = {}
 _SIMULATION_CORRELATION_BY_ID: dict[str, str] = {}
 
 
-@dataclass(slots=True)
-class _IdempotencyEntry:
-    tool_name: str
-    fingerprint: str
-    response: dict[str, object]
-    completed_at_monotonic: float
-
-
-_COMPLETED_REQUESTS: dict[str, _IdempotencyEntry] = {}
+_COMPLETED_REQUESTS: dict[str, IdempotencyEntry] = {}
 _IN_FLIGHT_REQUESTS: dict[str, tuple[str, str]] = {}
+_PERSISTENCE_BACKEND_NAME = _DEFAULT_PERSISTENCE_BACKEND
+_PERSISTENCE_BACKEND: SQLitePersistenceBackend | None = None
 _SyncResult = TypeVar("_SyncResult")
 
 
@@ -216,8 +222,122 @@ def _configured_idempotency_max_entries() -> int:
     return max_entries
 
 
+def _configured_persistence_backend() -> str:
+    raw = os.getenv(_PERSISTENCE_BACKEND_ENV)
+    if raw is None:
+        return _DEFAULT_PERSISTENCE_BACKEND
+
+    backend = raw.strip().lower()
+    if not backend:
+        return _DEFAULT_PERSISTENCE_BACKEND
+    if backend not in {"memory", "sqlite"}:
+        raise RuntimeError(
+            f"Invalid {_PERSISTENCE_BACKEND_ENV} value: expected 'memory' or 'sqlite'"
+        )
+    return backend
+
+
+def _configured_sqlite_path() -> Path:
+    raw = os.getenv(_PERSISTENCE_SQLITE_PATH_ENV)
+    if raw is None or not raw.strip():
+        return Path.cwd() / _DEFAULT_PERSISTENCE_SQLITE_PATH
+    return Path(raw.strip()).expanduser()
+
+
+def _allow_corruption_fallback() -> bool:
+    return _parse_bool_env(os.getenv(_PERSISTENCE_CORRUPTION_FALLBACK_ENV), default=False)
+
+
+def _runtime_snapshot() -> PersistenceSnapshot:
+    return PersistenceSnapshot(
+        completed_requests={
+            request_id: IdempotencyEntry(
+                tool_name=entry.tool_name,
+                fingerprint=entry.fingerprint,
+                response=deepcopy(entry.response),
+                completed_at_monotonic=entry.completed_at_monotonic,
+            )
+            for request_id, entry in _COMPLETED_REQUESTS.items()
+        },
+        in_flight_requests=dict(_IN_FLIGHT_REQUESTS),
+        plan_correlation_by_id=dict(_PLAN_CORRELATION_BY_ID),
+        simulation_correlation_by_id=dict(_SIMULATION_CORRELATION_BY_ID),
+    )
+
+
+def _restore_runtime_snapshot(snapshot: PersistenceSnapshot) -> None:
+    _COMPLETED_REQUESTS.clear()
+    _COMPLETED_REQUESTS.update(snapshot.completed_requests)
+    _IN_FLIGHT_REQUESTS.clear()
+    _IN_FLIGHT_REQUESTS.update(snapshot.in_flight_requests)
+    _PLAN_CORRELATION_BY_ID.clear()
+    _PLAN_CORRELATION_BY_ID.update(snapshot.plan_correlation_by_id)
+    _SIMULATION_CORRELATION_BY_ID.clear()
+    _SIMULATION_CORRELATION_BY_ID.update(snapshot.simulation_correlation_by_id)
+
+
+def _persist_runtime_snapshot() -> None:
+    global _PERSISTENCE_BACKEND
+    global _PERSISTENCE_BACKEND_NAME
+
+    backend = _PERSISTENCE_BACKEND
+    if backend is None:
+        return
+
+    try:
+        backend.save_snapshot(_runtime_snapshot())
+    except PersistenceCorruptionError as exc:
+        if _allow_corruption_fallback():
+            _PERSISTENCE_BACKEND = None
+            _PERSISTENCE_BACKEND_NAME = "memory"
+            raise ValueError(
+                "SQLite persistence backend is corrupt; switched to memory backend "
+                "because fallback is explicitly enabled"
+            ) from exc
+        raise ValueError(
+            "SQLite persistence backend is corrupt; configure "
+            f"{_PERSISTENCE_CORRUPTION_FALLBACK_ENV}=true to allow fallback"
+        ) from exc
+    except PersistenceUnavailableError as exc:
+        raise ValueError("SQLite persistence backend unavailable during request") from exc
+
+
+def _initialize_persistence_backend() -> None:
+    global _PERSISTENCE_BACKEND
+    global _PERSISTENCE_BACKEND_NAME
+
+    backend = _configured_persistence_backend()
+    if backend == "memory":
+        _PERSISTENCE_BACKEND_NAME = "memory"
+        _PERSISTENCE_BACKEND = None
+        return
+
+    sqlite_backend = SQLitePersistenceBackend(_configured_sqlite_path())
+    try:
+        snapshot = sqlite_backend.load_snapshot()
+    except PersistenceCorruptionError as exc:
+        if _allow_corruption_fallback():
+            _PERSISTENCE_BACKEND_NAME = "memory"
+            _PERSISTENCE_BACKEND = None
+            return
+        raise RuntimeError(
+            "SQLite persistence backend is corrupt and fallback is disabled"
+        ) from exc
+    except PersistenceUnavailableError:
+        _PERSISTENCE_BACKEND_NAME = "memory"
+        _PERSISTENCE_BACKEND = None
+        return
+
+    _restore_runtime_snapshot(snapshot)
+    _PERSISTENCE_BACKEND_NAME = "sqlite"
+    _PERSISTENCE_BACKEND = sqlite_backend
+
+
 def _idempotency_now_seconds() -> float:
     return perf_counter()
+
+
+_initialize_persistence_backend()
 
 
 def _prune_completed_idempotency_entries(now: float | None = None) -> None:
@@ -236,7 +356,10 @@ def _prune_completed_idempotency_entries(now: float | None = None) -> None:
     while len(_COMPLETED_REQUESTS) > max_entries:
         oldest_request_id = min(
             _COMPLETED_REQUESTS,
-            key=lambda req_id: _COMPLETED_REQUESTS[req_id].completed_at_monotonic,
+            key=lambda req_id: (
+                _COMPLETED_REQUESTS[req_id].completed_at_monotonic,
+                req_id,
+            ),
         )
         _COMPLETED_REQUESTS.pop(oldest_request_id, None)
 
@@ -493,7 +616,14 @@ def _prepare_idempotent_request(
     tool_name: str,
     fingerprint: str,
 ) -> dict[str, object] | None:
+    snapshot_before = _runtime_snapshot()
     _prune_completed_idempotency_entries()
+    try:
+        _persist_runtime_snapshot()
+    except ValueError:
+        _restore_runtime_snapshot(snapshot_before)
+        raise
+
     completed = _COMPLETED_REQUESTS.get(request_id)
     if completed is not None:
         if completed.tool_name != tool_name or completed.fingerprint != fingerprint:
@@ -512,6 +642,11 @@ def _prepare_idempotent_request(
         raise ValueError(f"request_id '{request_id}' is already in progress")
 
     _IN_FLIGHT_REQUESTS[request_id] = (tool_name, fingerprint)
+    try:
+        _persist_runtime_snapshot()
+    except ValueError:
+        _restore_runtime_snapshot(snapshot_before)
+        raise
     return None
 
 
@@ -521,18 +656,33 @@ def _complete_idempotent_request(
     fingerprint: str,
     response: dict[str, object],
 ) -> None:
+    snapshot_before = _runtime_snapshot()
     _IN_FLIGHT_REQUESTS.pop(request_id, None)
-    _COMPLETED_REQUESTS[request_id] = _IdempotencyEntry(
+    _COMPLETED_REQUESTS[request_id] = IdempotencyEntry(
         tool_name=tool_name,
         fingerprint=fingerprint,
         response=deepcopy(response),
         completed_at_monotonic=_idempotency_now_seconds(),
     )
     _prune_completed_idempotency_entries()
+    try:
+        _persist_runtime_snapshot()
+    except ValueError:
+        _restore_runtime_snapshot(snapshot_before)
+        raise
 
 
 def _reset_in_flight_request(request_id: str) -> None:
+    if request_id not in _IN_FLIGHT_REQUESTS:
+        return
+
+    snapshot_before = _runtime_snapshot()
     _IN_FLIGHT_REQUESTS.pop(request_id, None)
+    try:
+        _persist_runtime_snapshot()
+    except ValueError:
+        _restore_runtime_snapshot(snapshot_before)
+        raise
 
 
 async def _run_bounded_sync(  # noqa: UP047

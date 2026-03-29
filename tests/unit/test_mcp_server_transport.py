@@ -19,6 +19,7 @@ pytest.importorskip("mcp.server.fastmcp")
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.mcp import server as mcp_server
 from mars_agent.mcp.adapter import MarsMCPAdapter
+from mars_agent.mcp.persistence import PersistenceCorruptionError, PersistenceUnavailableError
 from mars_agent.mcp.server import mars_benchmark, mars_governance, mars_plan, mars_simulate
 from mars_agent.orchestration import MissionGoal, MissionPhase
 from mars_agent.reasoning.models import EvidenceReference
@@ -804,6 +805,158 @@ def test_transport_direct_idempotency_max_entries_evicts_oldest_request(
     assert reused["ok"] is True
     assert len(mcp_server._adapter._plans) == before_count + 3
     assert len(mcp_server._COMPLETED_REQUESTS) <= 1
+
+
+def test_transport_direct_idempotency_eviction_tie_break_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed_before = dict(mcp_server._COMPLETED_REQUESTS)
+    mcp_server._COMPLETED_REQUESTS.clear()
+
+    fake_now = {"value": 300.0}
+
+    def _fake_idempotency_now() -> float:
+        return fake_now["value"]
+
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_TTL_SECONDS", "900")
+    monkeypatch.setenv("MARS_MCP_IDEMPOTENCY_MAX_ENTRIES", "1")
+    monkeypatch.setattr(mcp_server, "_idempotency_now_seconds", _fake_idempotency_now)
+
+    try:
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-idempotent-tie-b",
+            )
+        )
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-idempotent-tie-a",
+            )
+        )
+
+        assert "req-idempotent-tie-b" in mcp_server._COMPLETED_REQUESTS
+        assert "req-idempotent-tie-a" not in mcp_server._COMPLETED_REQUESTS
+    finally:
+        mcp_server._COMPLETED_REQUESTS.clear()
+        mcp_server._COMPLETED_REQUESTS.update(completed_before)
+
+
+def test_transport_config_persistence_backend_defaults_to_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MARS_MCP_PERSISTENCE_BACKEND", raising=False)
+    assert mcp_server._configured_persistence_backend() == "memory"
+
+
+def test_transport_config_persistence_backend_invalid_value_raises_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MARS_MCP_PERSISTENCE_BACKEND", "redis")
+    with pytest.raises(RuntimeError, match="expected 'memory' or 'sqlite'"):
+        mcp_server._configured_persistence_backend()
+
+
+def test_transport_stdio_sqlite_replays_completed_request_across_server_restart(
+    tmp_path: Path,
+) -> None:
+    sqlite_path = tmp_path / "runtime-state.sqlite3"
+    env = {
+        "MARS_MCP_PERSISTENCE_BACKEND": "sqlite",
+        "MARS_MCP_PERSISTENCE_SQLITE_PATH": str(sqlite_path),
+    }
+
+    first = _call_tool_stdio_sync(
+        "mars.plan",
+        {
+            "goal": _goal_payload(_goal()),
+            "evidence": _evidence_payload(_evidence()),
+            "request_id": "req-stdio-sqlite-restart",
+        },
+        env_overrides=env,
+    )
+    assert first.isError is False
+    first_payload = first.structuredContent
+    assert isinstance(first_payload, dict)
+
+    second = _call_tool_stdio_sync(
+        "mars.plan",
+        {
+            "goal": _goal_payload(_goal()),
+            "evidence": _evidence_payload(_evidence()),
+            "request_id": "req-stdio-sqlite-restart",
+        },
+        env_overrides=env,
+    )
+    assert second.isError is False
+    second_payload = second.structuredContent
+    assert isinstance(second_payload, dict)
+
+    assert first_payload == second_payload
+
+
+def test_transport_direct_sqlite_unavailable_mid_run_fails_fast_invalid_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _UnavailableBackend:
+        def save_snapshot(self, snapshot: object) -> None:
+            raise PersistenceUnavailableError("disk I/O error")
+
+    monkeypatch.setattr(mcp_server, "_PERSISTENCE_BACKEND", cast(object, _UnavailableBackend()))
+    monkeypatch.setattr(mcp_server, "_PERSISTENCE_BACKEND_NAME", "sqlite")
+
+    with pytest.raises(ToolError) as exc_info:
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-sqlite-unavailable",
+            )
+        )
+
+    error_payload = _parse_tool_error(exc_info.value)
+    assert error_payload["code"] == "invalid_request"
+    assert error_payload["request_id"] == "req-sqlite-unavailable"
+    assert "backend unavailable" in str(error_payload["message"])
+
+
+def test_transport_direct_sqlite_corruption_switches_to_memory_when_explicitly_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _CorruptBackend:
+        def save_snapshot(self, snapshot: object) -> None:
+            raise PersistenceCorruptionError("database disk image is malformed")
+
+    monkeypatch.setenv("MARS_MCP_PERSISTENCE_FALLBACK_ON_CORRUPTION", "true")
+    monkeypatch.setattr(mcp_server, "_PERSISTENCE_BACKEND", cast(object, _CorruptBackend()))
+    monkeypatch.setattr(mcp_server, "_PERSISTENCE_BACKEND_NAME", "sqlite")
+
+    with pytest.raises(ToolError) as exc_info:
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-sqlite-corrupt-fallback",
+            )
+        )
+
+    error_payload = _parse_tool_error(exc_info.value)
+    assert error_payload["code"] == "invalid_request"
+    assert "switched to memory backend" in str(error_payload["message"])
+    assert mcp_server._PERSISTENCE_BACKEND is None
+    assert mcp_server._PERSISTENCE_BACKEND_NAME == "memory"
+
+    retried = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-sqlite-corrupt-fallback",
+        )
+    )
+    assert retried["ok"] is True
 
 
 def test_transport_direct_timeout_does_not_commit_state_and_allows_retry(

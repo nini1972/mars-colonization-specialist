@@ -86,3 +86,18 @@ The MCP server now emits structured observability signals while preserving the e
 - Idempotency: duplicate `request_id` calls with identical tool arguments replay the cached success payload; conflicting re-use of a completed or in-flight `request_id` returns `invalid_request`.
 - Idempotency cache bounds: use `MARS_MCP_IDEMPOTENCY_TTL_SECONDS` (default `900`) and `MARS_MCP_IDEMPOTENCY_MAX_ENTRIES` (default `512`) to limit replay cache retention and memory growth.
 - State safety: `mars.plan` and `mars.simulate` only commit IDs into in-memory linkage maps after bounded execution succeeds.
+
+## MCP Runtime Persistence (Phase 9A)
+
+- Backend selection contract: `MARS_MCP_PERSISTENCE_BACKEND=memory|sqlite`.
+  - Missing value defaults to `memory`.
+  - Invalid values fail startup.
+- SQLite storage location: `MARS_MCP_PERSISTENCE_SQLITE_PATH` (default: `./.mars_mcp_runtime.sqlite3`).
+- Persistence contract version: SQLite metadata includes `schema_version=1`; startup enforces a version guard.
+- Degraded mode policy:
+  - SQLite initialization failures fall back to memory.
+  - SQLite mid-run unavailability fails fast with `invalid_request`.
+  - SQLite corruption fails fast by default and only falls back when `MARS_MCP_PERSISTENCE_FALLBACK_ON_CORRUPTION=true`.
+- Deterministic ordering:
+  - Idempotency eviction uses stable ordering (`completed_at_monotonic`, then `request_id`).
+  - Replay/conflict behavior remains deterministic across restarts.
