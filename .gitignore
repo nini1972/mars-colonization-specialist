@@ -4,3 +4,6 @@
 .github\instructions\codacy.instructions.md
 __pycache__/
 *.pyc
+.codacy
+
+# Ignore the .vscode directory

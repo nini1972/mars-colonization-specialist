@@ -19,15 +19,15 @@ Phases 0-7 baseline for deterministic, testable implementation.
 - Phase 5: Simulation IR/compiler, scenario suite, and generate-test-repair validation pipeline.
 - Phase 6: Governance hard gate, audit trail export, benchmark deltas, and release hardening.
 - Phase 7: MCP adapter package with contract tests ensuring parity with standalone pipelines.
-- Phase 8 (in progress):
+- Phase 8:
   - Workstream 1 ✅ — FastMCP server runtime, structured JSON ToolError payload, schema-versioned error contract.
   - Workstream 2 ✅ — Token auth and per-tool authorization via env-driven policy (`MARS_MCP_AUTH_*`).
   - Parity contract tests ✅ — Full 4-tool stdio pipeline parity verified against adapter output.
   - Workstream 3 ✅ — Structured stderr logs, correlation propagation, progress notifications, and in-process metrics.
+  - Workstream 4 ✅ — Transport-edge semantic validation, timeout-bounded execution (`MARS_MCP_TOOL_TIMEOUT_SECONDS`), and request-id idempotent replay/conflict protection.
 
 ## Next
 
-- Phase 8 Workstream 4: reliability hardening and execution safety boundaries.
 - See `docs/phase8-transport-auth-observability-scope.md`.
 
 ## MCP Error Payload Contract
@@ -46,6 +46,8 @@ Auth and authorization specific error codes:
 
 - `unauthenticated`
 - `forbidden`
+- `invalid_request`
+- `deadline_exceeded`
 
 ## MCP Auth (Workstream 2)
 
@@ -76,3 +78,10 @@ The MCP server now emits structured observability signals while preserving the e
 - Progress notifications: best-effort MCP progress updates via FastMCP context APIs.
 - Client log notifications: best-effort info/error log messages emitted to MCP clients.
 - Metrics: lightweight in-process counters/timers (`calls`, `successes`, `failures`, `auth_failures`, `total_latency_ms`) kept internal for now.
+
+## MCP Reliability Hardening (Workstream 4)
+
+- Transport-edge validation: semantic payload checks fail fast with stable `invalid_request` ToolError payloads before execution.
+- Timeout control: set `MARS_MCP_TOOL_TIMEOUT_SECONDS` to bound synchronous tool execution and return `deadline_exceeded` without committing timed-out plan/simulation state.
+- Idempotency: duplicate `request_id` calls with identical tool arguments replay the cached success payload; conflicting re-use of a completed or in-flight `request_id` returns `invalid_request`.
+- State safety: `mars.plan` and `mars.simulate` only commit IDs into in-memory linkage maps after bounded execution succeeds.

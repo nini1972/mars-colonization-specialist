@@ -5,6 +5,7 @@ from collections.abc import Coroutine
 from datetime import date
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
 import anyio
 import pytest
@@ -16,6 +17,7 @@ from mcp.types import CallToolResult, LoggingMessageNotificationParams
 pytest.importorskip("mcp.server.fastmcp")
 
 from mars_agent.knowledge.models import TrustTier
+from mars_agent.mcp import server as mcp_server
 from mars_agent.mcp.adapter import MarsMCPAdapter
 from mars_agent.mcp.server import mars_benchmark, mars_governance, mars_plan, mars_simulate
 from mars_agent.orchestration import MissionGoal, MissionPhase
@@ -368,6 +370,10 @@ def _parse_error_payload(error_text: str) -> dict[str, object]:
     return payload
 
 
+def _parse_tool_error(exc: ToolError) -> dict[str, object]:
+    return _parse_error_payload(str(exc))
+
+
 def test_transport_plan_matches_adapter_invoke_output() -> None:
     goal = _goal()
     evidence = _evidence()
@@ -534,6 +540,28 @@ def test_transport_stdio_error_uses_mcp_error_semantics() -> None:
     assert isinstance(error_payload["message"], str)
 
 
+def test_transport_stdio_semantic_validation_fails_fast_with_stable_error() -> None:
+    invalid_goal = _goal_payload(_goal())
+    invalid_goal["desired_confidence"] = 1.5
+
+    result = _call_tool_stdio_sync(
+        "mars.plan",
+        {
+            "goal": invalid_goal,
+            "evidence": _evidence_payload(_evidence()),
+            "request_id": "req-stdio-invalid-goal",
+        },
+    )
+
+    assert result.isError is True
+    error_payload = _parse_error_payload(_tool_error_text(result))
+    assert error_payload["schema_version"] == "1.0"
+    assert error_payload["tool"] == "mars.plan"
+    assert error_payload["code"] == "invalid_request"
+    assert error_payload["request_id"] == "req-stdio-invalid-goal"
+    assert "desired_confidence" in str(error_payload["message"])
+
+
 def test_transport_stdio_auth_missing_token_returns_unauthenticated() -> None:
     result = _call_tool_stdio_sync(
         "mars.plan",
@@ -634,6 +662,95 @@ def test_transport_stdio_auth_valid_token_and_permission_preserves_success_shape
     assert isinstance(structured, dict)
     assert structured["request_id"] == "req-auth-ok"
     assert _normalize_payload(_unwrap_success(structured)) == _normalize_payload(expected)
+
+
+def test_transport_direct_duplicate_request_id_replays_completed_response() -> None:
+    before_count = len(mcp_server._adapter._plans)
+
+    first = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-plan",
+        )
+    )
+    second = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-plan",
+        )
+    )
+
+    assert first == second
+    assert len(mcp_server._adapter._plans) == before_count + 1
+
+
+def test_transport_direct_duplicate_request_id_conflict_returns_invalid_request() -> None:
+    original_goal = _goal_payload(_goal())
+    changed_goal = dict(original_goal)
+    changed_goal["crew_size"] = cast(int, original_goal["crew_size"]) + 1
+
+    _call_direct_sync(
+        mars_plan(
+            goal=original_goal,
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-idempotent-conflict",
+        )
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        _call_direct_sync(
+            mars_plan(
+                goal=changed_goal,
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-idempotent-conflict",
+            )
+        )
+
+    error_payload = _parse_tool_error(exc_info.value)
+    assert error_payload["code"] == "invalid_request"
+    assert error_payload["request_id"] == "req-idempotent-conflict"
+    assert "already used" in str(error_payload["message"])
+
+
+def test_transport_direct_timeout_does_not_commit_state_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before_count = len(mcp_server._adapter._plans)
+
+    async def _timeout_bounded_sync(*args: object, **kwargs: object) -> object:
+        raise TimeoutError("Tool execution exceeded timeout of 0.010 seconds")
+
+    monkeypatch.setattr(mcp_server, "_run_bounded_sync", _timeout_bounded_sync)
+
+    with pytest.raises(ToolError) as exc_info:
+        _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-timeout-plan",
+            )
+        )
+
+    error_payload = _parse_tool_error(exc_info.value)
+    assert error_payload["code"] == "deadline_exceeded"
+    assert error_payload["request_id"] == "req-timeout-plan"
+    assert len(mcp_server._adapter._plans) == before_count
+
+    monkeypatch.undo()
+
+    retried = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-timeout-plan",
+        )
+    )
+
+    assert retried["ok"] is True
+    assert retried["request_id"] == "req-timeout-plan"
+    assert len(mcp_server._adapter._plans) == before_count + 1
 
 
 def test_transport_stdio_full_pipeline_parity_matches_adapter() -> None:

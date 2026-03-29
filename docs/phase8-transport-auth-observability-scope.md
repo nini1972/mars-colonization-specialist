@@ -42,16 +42,17 @@ Acceptance criteria:
 - ✅ Tool invocations emit traceable logs and basic metrics without changing success or ToolError payload contracts.
 - ✅ Failure paths are diagnosable from logs (including auth failures with explicit `error_code`).
 
-### 4) Reliability hardening
+### 4) Reliability hardening ✅
 
-- Add request schema validation boundaries at transport edge.
-- Add timeout and bounded execution controls for long-running operations.
-- Add idempotency strategy for duplicate invocation IDs where practical.
+- Added request schema validation boundaries at transport edge, including semantic range checks for mission goal and execution parameters.
+- Added timeout and bounded execution controls for synchronous tool work via `MARS_MCP_TOOL_TIMEOUT_SECONDS`.
+- Added request-id idempotency replay/conflict handling in the server runtime.
+- `mars.plan` / `mars.simulate` now commit in-memory IDs only after bounded execution succeeds, preventing timed-out requests from corrupting linkage state.
 
 Acceptance criteria:
 
-- Invalid payloads fail fast with stable error shape.
-- Timeouts and retries do not corrupt in-memory run linkage.
+- ✅ Invalid payloads fail fast with stable error shape.
+- ✅ Timeouts and retries do not corrupt in-memory run linkage.
 
 ## Test strategy
 
@@ -59,6 +60,7 @@ Acceptance criteria:
 - Contract tests for transport parity vs. in-process adapter output.
 - End-to-end smoke test covering `plan` -> `simulate` -> `governance` -> `benchmark`.
 - Regression tests for deterministic behavior under fixed seeds.
+- Added Workstream 4 transport tests for semantic validation, duplicate `request_id` replay/conflict, and timeout-safe retry behavior.
 
 ## Out of scope
 
