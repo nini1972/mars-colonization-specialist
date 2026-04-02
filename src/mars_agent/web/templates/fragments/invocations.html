@@ -38,6 +38,7 @@
             hx-get="/dashboard/fragments/invocation-detail?request_id={{ item['request_id'] }}"
             hx-target="#invocation-detail-modal-body"
             hx-swap="innerHTML"
+            hx-on:click="window.dispatchEvent(new CustomEvent('open-invocation-modal'))"
           >{{ item["request_id"] }}</button>
         </td>
         <td>{{ item["outcome"] }}</td>

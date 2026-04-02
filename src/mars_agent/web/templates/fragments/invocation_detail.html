@@ -1,13 +1,45 @@
-{% if detail %}
-<div class="fragment" data-fragment="invocation-detail">
+{% if detail["found"] %}
+<div class="fragment" data-fragment="invocation-detail" data-fragment-required="found,request_id,schema_version,item,breadcrumb,replay_badge,correlation_id,chain_nodes" data-fragment-allowed="found,request_id,schema_version,item,breadcrumb,replay_badge,correlation_id,chain_nodes">
+  <p class="breadcrumb">
+    {{ detail["breadcrumb"]["root"] }} / {{ detail["breadcrumb"]["section"] }} /
+    <strong>{{ detail["breadcrumb"]["phase"] }}</strong>
+  </p>
   <header class="card-head">
     <h2>Invocation Detail</h2>
-    <span class="pill">{{ request_id }}</span>
+    <div>
+      <span class="pill">{{ request_id }}</span>
+      <span class="pill replay-badge">{{ detail["replay_badge"] }}</span>
+    </div>
   </header>
-  <pre>{{ detail | tojson(indent=2) }}</pre>
+
+  <div class="mini-map">
+    <span>Chain mini-map:</span>
+    {% for node in detail["chain_nodes"] %}
+      <button
+        class="btn mini-node {% if node['active'] %}mini-node-active{% endif %}"
+        hx-get="/dashboard/fragments/correlation?correlation_id={{ detail['correlation_id'] }}"
+        hx-target="#correlation-panel"
+        hx-swap="innerHTML"
+      >{{ node["label"] }}</button>
+    {% endfor %}
+  </div>
+
+  <ul class="keyvals">
+    <li><span>Tool</span><strong>{{ detail["item"]["tool"] }}</strong></li>
+    <li><span>Outcome</span><strong>{{ detail["item"]["outcome"] }}</strong></li>
+    <li><span>Error Code</span><strong>{{ detail["item"]["error_code"] or "none" }}</strong></li>
+    <li><span>Latency (ms)</span><strong>{{ detail["item"]["latency_ms"] }}</strong></li>
+    <li><span>Correlation ID</span><strong>{{ detail["item"]["correlation_id"] }}</strong></li>
+    <li><span>Mission ID</span><strong>{{ detail["item"]["mission_id"] or "n/a" }}</strong></li>
+  </ul>
+
+  <details>
+    <summary>Raw payload</summary>
+    <pre>{{ detail | tojson(indent=2) }}</pre>
+  </details>
 </div>
 {% else %}
-<div class="fragment" data-fragment="invocation-detail-empty">
+<div class="fragment" data-fragment="invocation-detail-empty" data-fragment-required="found,request_id" data-fragment-allowed="found,request_id">
   <p class="muted">No invocation found for {{ request_id }}.</p>
 </div>
 {% endif %}

@@ -55,10 +55,35 @@
   </div>
 </section>
 
+<section
+  class="card"
+  x-data="{ modalOpen: false, modalLoading: false }"
+  @open-invocation-modal.window="modalOpen = true"
+>
+  <header class="card-head">
+    <h2>Invocation Modal</h2>
+    <span class="pill">HTMX + Alpine interaction</span>
+  </header>
+  <p class="muted">Select any request ID in the invocation table to open detail modal.</p>
+
+  <div x-show="modalOpen" class="modal-backdrop" @click.self="modalOpen = false">
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Invocation Detail Modal">
+      <header class="card-head">
+        <h3>Invocation Detail</h3>
+        <button class="btn" @click="modalOpen = false">Close</button>
+      </header>
+      <div x-show="modalLoading" class="skeleton">Loading modal content...</div>
+      <div id="invocation-detail-modal-body" @htmx:before-request="modalLoading = true" @htmx:after-request="modalLoading = false">
+        <p class="muted">Pick a request ID to load details.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="card" x-data="{ open: true, loadingChain: false }">
   <header class="card-head">
     <h2>Correlation Drill-Down</h2>
-    <button class="btn" @click="open = !open" x-text="open ? 'Collapse' : 'Expand'"></button>
+    <button class="btn" type="button" aria-label="Toggle correlation drill-down" @click="open = !open" x-text="open ? 'Collapse' : 'Expand'">Collapse</button>
   </header>
   <form class="inline-form" x-show="open" hx-get="/dashboard/fragments/correlation" hx-target="#correlation-panel" hx-swap="innerHTML" @htmx:before-request="loadingChain = true" @htmx:after-request="loadingChain = false">
     <label for="corr-id">Correlation ID</label>

@@ -1,16 +1,27 @@
 {% set items = chain["items"] %}
-<div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items" data-fragment-allowed="schema_version,correlation_id,items">
+<div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items,integrity" data-fragment-allowed="schema_version,correlation_id,items,integrity">
   <header class="card-head">
     <h2>Correlation Chain</h2>
-    <span class="pill">{{ correlation_id }}</span>
+    <div>
+      <span class="pill">{{ correlation_id }}</span>
+      <span class="pill integrity-{{ chain['integrity']['status'] }}">{{ chain["integrity"]["status"] }}</span>
+    </div>
   </header>
+  {% if chain["integrity"]["warning"] %}
+  <div class="banner banner-warn" role="status">{{ chain["integrity"]["warning"] }}</div>
+  {% endif %}
+
+  {% if chain["integrity"]["issues"] %}
+  <p class="muted">Integrity issues: {{ chain["integrity"]["issues"] | join(", ") }}</p>
+  {% endif %}
+
   {% if items %}
   <ul class="timeline">
     {% for item in items %}
     <li>
       <span>{{ item["recorded_at"] }}</span>
       <strong>{{ item["tool"] }}</strong>
-      <em>{{ item["outcome"] }}</em>
+      <span class="pill outcome-{{ item['outcome'] }}">{{ item["outcome"] }}</span>
       {% if item["error_code"] %}<code>{{ item["error_code"] }}</code>{% endif %}
     </li>
     {% endfor %}

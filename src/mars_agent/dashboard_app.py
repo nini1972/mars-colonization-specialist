@@ -163,6 +163,157 @@ def _get_invocations_fragment_data(
     return normalized
 
 
+def _phase_label_for_tool(tool_name: str) -> str:
+    mapping = {
+        "mars.plan": "Planning",
+        "mars.simulate": "Simulation",
+        "mars.governance": "Governance",
+        "mars.benchmark": "Benchmarking",
+    }
+    if tool_name.startswith("mars.telemetry"):
+        return "Operations"
+    return mapping.get(tool_name, "Operations")
+
+
+def _replay_badge_for_invocation(item: Mapping[str, object], event_count: int) -> str:
+    outcome = str(item.get("outcome", ""))
+    error_code = item.get("error_code")
+    if outcome == "failure" and error_code == "invalid_request":
+        return "Conflict-rejected"
+    if event_count > 2 and outcome == "success":
+        return "Replayed"
+    return "Fresh execution"
+
+
+def _invocation_detail_view_model(request_id: str) -> dict[str, object]:
+    detail = telemetry_invocation_detail(request_id)
+    if detail is None:
+        return {
+            "found": False,
+            "request_id": request_id,
+        }
+
+    item_raw = detail.get("item")
+    item = _ensure_mapping(item_raw, label="invocation_detail.item")
+    tool_name = str(item.get("tool", "unknown"))
+    correlation_id = str(item.get("correlation_id", ""))
+
+    listing = telemetry_list_events(page=1, page_size=5000)
+    items = listing.get("items")
+    related_count = 0
+    if isinstance(items, list):
+        related_count = sum(
+            1
+            for event in items
+            if isinstance(event, Mapping)
+            and str(event.get("request_id", "")) == request_id
+        )
+
+    return {
+        "found": True,
+        "request_id": request_id,
+        "schema_version": detail.get("schema_version"),
+        "item": dict(item),
+        "breadcrumb": {
+            "root": "Mission Ops",
+            "section": "Invocation Detail",
+            "phase": _phase_label_for_tool(tool_name),
+        },
+        "replay_badge": _replay_badge_for_invocation(item, related_count),
+        "correlation_id": correlation_id,
+        "chain_nodes": [
+            {
+                "label": "Plan",
+                "tool": "mars.plan",
+                "active": tool_name == "mars.plan",
+            },
+            {
+                "label": "Simulate",
+                "tool": "mars.simulate",
+                "active": tool_name == "mars.simulate",
+            },
+            {
+                "label": "Governance",
+                "tool": "mars.governance",
+                "active": tool_name == "mars.governance",
+            },
+            {
+                "label": "Benchmark",
+                "tool": "mars.benchmark",
+                "active": tool_name == "mars.benchmark",
+            },
+        ],
+    }
+
+
+def _correlation_view_model(correlation_id: str) -> dict[str, object]:
+    chain_raw = telemetry_correlation_chain(correlation_id)
+    chain = _ensure_mapping(chain_raw, label="correlation_chain")
+    _validate_exact_keys(
+        chain,
+        required={"schema_version", "correlation_id", "items"},
+        allowed={"schema_version", "correlation_id", "items"},
+        label="correlation_chain",
+    )
+
+    items_raw = chain.get("items")
+    if not isinstance(items_raw, list):
+        raise ValueError("Invalid correlation chain items: expected list")
+
+    items: list[dict[str, object]] = [
+        dict(_ensure_mapping(item, label="correlation_chain.item")) for item in items_raw
+    ]
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            str(item.get("recorded_at", "")),
+            str(item.get("request_id", "")),
+            str(item.get("event", "")),
+        ),
+    )
+
+    expected_sequence = ["mars.plan", "mars.simulate", "mars.governance", "mars.benchmark"]
+    expected_index = {tool: idx for idx, tool in enumerate(expected_sequence)}
+    tool_sequence = [str(item.get("tool", "")) for item in ordered if str(item.get("tool", ""))]
+    recognized = [tool for tool in tool_sequence if tool in expected_index]
+
+    issues: list[str] = []
+    if recognized:
+        if recognized[0] != "mars.plan":
+            issues.append("missing_upstream")
+        if recognized[-1] != "mars.benchmark":
+            issues.append("missing_downstream")
+        if any(
+            expected_index[recognized[i]] < expected_index[recognized[i - 1]]
+            for i in range(1, len(recognized))
+        ):
+            issues.append("order_violation")
+
+        present = set(recognized)
+        if "mars.governance" in present and "mars.simulate" not in present:
+            issues.append("orphaned_child")
+        if "mars.benchmark" in present and "mars.simulate" not in present:
+            issues.append("orphaned_child")
+    else:
+        issues.append("empty_chain")
+
+    integrity_status = "complete" if not issues else "partial"
+    return {
+        "schema_version": chain.get("schema_version"),
+        "correlation_id": chain.get("correlation_id", correlation_id),
+        "items": ordered,
+        "integrity": {
+            "status": integrity_status,
+            "issues": sorted(set(issues)),
+            "warning": (
+                "Chain appears incomplete. Validate upstream/downstream steps before action."
+                if issues
+                else None
+            ),
+        },
+    }
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page(
     request: Request,
@@ -259,7 +410,7 @@ def invocations_fragment(
 
 @app.get("/dashboard/fragments/invocation-detail", response_class=HTMLResponse)
 def invocation_detail_fragment(request: Request, request_id: str) -> HTMLResponse:
-    detail = telemetry_invocation_detail(request_id)
+    detail = _invocation_detail_view_model(request_id)
     return templates.TemplateResponse(
         request=request,
         name="fragments/invocation_detail.html",
@@ -269,7 +420,10 @@ def invocation_detail_fragment(request: Request, request_id: str) -> HTMLRespons
 
 @app.get("/dashboard/fragments/correlation", response_class=HTMLResponse)
 def correlation_fragment(request: Request, correlation_id: str) -> HTMLResponse:
-    chain = telemetry_correlation_chain(correlation_id)
+    try:
+        chain = _correlation_view_model(correlation_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return templates.TemplateResponse(
         request=request,
         name="fragments/correlation.html",
