@@ -448,7 +448,7 @@ def telemetry_list_events(
     error_code: str | None = None,
     page: int = 1,
     page_size: int = 50,
-) -> dict[str, object]:
+) -> Mapping[str, object]:
     return _TELEMETRY.list_events(
         tool=tool,
         outcome=outcome,
@@ -458,19 +458,19 @@ def telemetry_list_events(
     )
 
 
-def telemetry_invocation_detail(request_id: str) -> dict[str, object] | None:
+def telemetry_invocation_detail(request_id: str) -> Mapping[str, object] | None:
     return _TELEMETRY.invocation_detail(request_id)
 
 
-def telemetry_correlation_chain(correlation_id: str) -> dict[str, object]:
+def telemetry_correlation_chain(correlation_id: str) -> Mapping[str, object]:
     return _TELEMETRY.correlation_chain(correlation_id)
 
 
-def telemetry_overview() -> dict[str, object]:
+def telemetry_overview() -> Mapping[str, object]:
     return _TELEMETRY.overview()
 
 
-def telemetry_dashboard_snapshot(*, page_size: int = 20) -> dict[str, object]:
+def telemetry_dashboard_snapshot(*, page_size: int = 20) -> Mapping[str, object]:
     return _TELEMETRY.dashboard_snapshot(
         page_size=page_size,
         persistence_backend=_PERSISTENCE_BACKEND_NAME,

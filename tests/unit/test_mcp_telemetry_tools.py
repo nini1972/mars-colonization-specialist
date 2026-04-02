@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from typing import TypeVar
+
 import anyio
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -14,9 +17,11 @@ from mars_agent.mcp.server import (
 )
 from tests.unit.test_mcp_server_transport import _evidence, _evidence_payload, _goal, _goal_payload
 
+T = TypeVar("T")
 
-def _call_direct_sync(coro):
-    async def _runner():
+
+def _call_direct_sync(coro: Awaitable[T]) -> T:  # noqa: UP047
+    async def _runner() -> T:
         return await coro
 
     return anyio.run(_runner)

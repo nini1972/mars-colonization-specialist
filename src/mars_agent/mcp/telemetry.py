@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final
+from typing import Final, Literal, TypedDict, cast
 
 TELEMETRY_SCHEMA_VERSION: Final[str] = "1.0"
 _REDACTED: Final[str] = "[REDACTED]"
@@ -18,6 +18,78 @@ _REDACT_KEYS: Final[tuple[str, ...]] = (
     "password",
     "secret",
 )
+
+TelemetryOutcome = Literal["started", "success", "failure"]
+
+
+class TelemetryEventPayload(TypedDict, total=False):
+    recorded_at: str
+    event: str
+    tool: str
+    request_id: str
+    correlation_id: str
+    mission_id: str | None
+    outcome: TelemetryOutcome | str
+    latency_ms: float
+    auth_enabled: bool
+    error_code: str | None
+    authorization: str
+
+
+class ListEventsResponse(TypedDict):
+    schema_version: str
+    items: list[TelemetryEventPayload]
+    page: int
+    page_size: int
+    total: int
+    has_next_page: bool
+
+
+class InvocationDetailResponse(TypedDict):
+    schema_version: str
+    item: TelemetryEventPayload
+
+
+class CorrelationChainResponse(TypedDict):
+    schema_version: str
+    correlation_id: str
+    items: list[TelemetryEventPayload]
+
+
+class OverviewHealth(TypedDict):
+    status: str
+    latest_recorded_at: str | None
+
+
+class OverviewCounts(TypedDict):
+    events: int
+    successes: int
+    failures: int
+
+
+class OverviewResponse(TypedDict):
+    schema_version: str
+    health: OverviewHealth
+    counts: OverviewCounts
+
+
+class CorrelationPanelResponse(TypedDict):
+    hint: str
+
+
+class ReplayDegradedPanelResponse(TypedDict):
+    persistence_backend: str
+    persistence_degraded: bool
+    idempotency_completed_entries: int
+    idempotency_in_flight_entries: int
+
+
+class DashboardSnapshotResponse(TypedDict):
+    schema_version: str
+    overview_panel: OverviewResponse
+    invocation_panel: ListEventsResponse
+    correlation_panel: CorrelationPanelResponse
+    replay_degraded_panel: ReplayDegradedPanelResponse
 
 
 @dataclass(slots=True)
@@ -73,14 +145,13 @@ class TelemetryQueryService:
     """In-process telemetry read model with deterministic query ordering."""
 
     def __init__(self, *, max_events: int = 5000) -> None:
-        self._events: deque[dict[str, object]] = deque(maxlen=max_events)
+        self._events: deque[TelemetryEventPayload] = deque(maxlen=max_events)
 
     def record(self, payload: Mapping[str, object]) -> None:
-        event_payload = {
-            "recorded_at": _utc_now_iso(),
-            **{str(key): _redact_value(value, key_name=str(key)) for key, value in payload.items()},
-        }
-        self._events.append(event_payload)
+        event_payload: dict[str, object] = {"recorded_at": _utc_now_iso()}
+        for key, value in payload.items():
+            event_payload[str(key)] = _redact_value(value, key_name=str(key))
+        self._events.append(cast(TelemetryEventPayload, event_payload))
 
     def list_events(
         self,
@@ -90,7 +161,7 @@ class TelemetryQueryService:
         error_code: str | None = None,
         page: int = 1,
         page_size: int = 50,
-    ) -> dict[str, object]:
+    ) -> ListEventsResponse:
         if page <= 0:
             raise ValueError("page must be greater than zero")
         if page_size <= 0:
@@ -129,7 +200,7 @@ class TelemetryQueryService:
             "has_next_page": end < total,
         }
 
-    def invocation_detail(self, request_id: str) -> dict[str, object] | None:
+    def invocation_detail(self, request_id: str) -> InvocationDetailResponse | None:
         ordered = sorted(
             self._events,
             key=lambda item: (
@@ -146,7 +217,7 @@ class TelemetryQueryService:
                 }
         return None
 
-    def correlation_chain(self, correlation_id: str) -> dict[str, object]:
+    def correlation_chain(self, correlation_id: str) -> CorrelationChainResponse:
         chain = [
             deepcopy(item)
             for item in sorted(
@@ -165,7 +236,7 @@ class TelemetryQueryService:
             "items": chain,
         }
 
-    def overview(self) -> dict[str, object]:
+    def overview(self) -> OverviewResponse:
         events = [deepcopy(item) for item in self._events]
         failures = sum(1 for item in events if item.get("outcome") == "failure")
         successes = sum(1 for item in events if item.get("outcome") == "success")
@@ -178,12 +249,17 @@ class TelemetryQueryService:
             ),
             reverse=True,
         )
+        latest_recorded_at: str | None = None
+        if latest:
+            candidate = latest[0].get("recorded_at")
+            if isinstance(candidate, str):
+                latest_recorded_at = candidate
 
         return {
             "schema_version": TELEMETRY_SCHEMA_VERSION,
             "health": {
                 "status": "degraded" if failures > 0 else "healthy",
-                "latest_recorded_at": latest[0].get("recorded_at") if latest else None,
+                "latest_recorded_at": latest_recorded_at,
             },
             "counts": {
                 "events": len(events),
@@ -199,10 +275,10 @@ class TelemetryQueryService:
         persistence_backend: str,
         idempotency_completed_entries: int,
         idempotency_in_flight_entries: int,
-    ) -> dict[str, object]:
+    ) -> DashboardSnapshotResponse:
         overview = self.overview()
         recent = self.list_events(page=1, page_size=page_size)
-        replay_and_degraded = {
+        replay_and_degraded: ReplayDegradedPanelResponse = {
             "persistence_backend": persistence_backend,
             "persistence_degraded": persistence_backend != "sqlite",
             "idempotency_completed_entries": idempotency_completed_entries,
