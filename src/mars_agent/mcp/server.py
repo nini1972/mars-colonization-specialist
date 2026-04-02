@@ -269,6 +269,7 @@ def _runtime_snapshot() -> PersistenceSnapshot:
         in_flight_requests=dict(_IN_FLIGHT_REQUESTS),
         plan_correlation_by_id=dict(_PLAN_CORRELATION_BY_ID),
         simulation_correlation_by_id=dict(_SIMULATION_CORRELATION_BY_ID),
+        metrics_by_tool=deepcopy(_TOOL_METRICS),
     )
 
 
@@ -281,6 +282,15 @@ def _restore_runtime_snapshot(snapshot: PersistenceSnapshot) -> None:
     _PLAN_CORRELATION_BY_ID.update(snapshot.plan_correlation_by_id)
     _SIMULATION_CORRELATION_BY_ID.clear()
     _SIMULATION_CORRELATION_BY_ID.update(snapshot.simulation_correlation_by_id)
+    _TOOL_METRICS.clear()
+    _TOOL_METRICS.update(deepcopy(snapshot.metrics_by_tool))
+
+
+def _persist_runtime_snapshot_best_effort() -> None:
+    try:
+        _persist_runtime_snapshot()
+    except ValueError:
+        return
 
 
 def _persist_runtime_snapshot() -> None:
@@ -481,10 +491,11 @@ def _record_metric(
     bucket["total_latency_ms"] += latency_ms
     if success:
         bucket["successes"] += 1.0
-        return
-    bucket["failures"] += 1.0
-    if auth_failure:
-        bucket["auth_failures"] += 1.0
+    else:
+        bucket["failures"] += 1.0
+        if auth_failure:
+            bucket["auth_failures"] += 1.0
+    _persist_runtime_snapshot_best_effort()
 
 
 def _emit_observability_log(

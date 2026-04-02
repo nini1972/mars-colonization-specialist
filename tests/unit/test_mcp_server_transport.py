@@ -898,6 +898,101 @@ def test_transport_stdio_sqlite_replays_completed_request_across_server_restart(
     assert first_payload == second_payload
 
 
+def test_transport_direct_sqlite_restores_internal_metrics_after_reinitialize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sqlite_path = tmp_path / "runtime-state.sqlite3"
+    completed_before = dict(mcp_server._COMPLETED_REQUESTS)
+    in_flight_before = dict(mcp_server._IN_FLIGHT_REQUESTS)
+    plan_corr_before = dict(mcp_server._PLAN_CORRELATION_BY_ID)
+    simulation_corr_before = dict(mcp_server._SIMULATION_CORRELATION_BY_ID)
+    metrics_before = {
+        tool_name: dict(bucket) for tool_name, bucket in mcp_server._TOOL_METRICS.items()
+    }
+    backend_name_before = mcp_server._PERSISTENCE_BACKEND_NAME
+    backend_before = mcp_server._PERSISTENCE_BACKEND
+    plans_before = dict(mcp_server._adapter._plans)
+    simulations_before = dict(mcp_server._adapter._simulations)
+
+    monkeypatch.setenv("MARS_MCP_PERSISTENCE_BACKEND", "sqlite")
+    monkeypatch.setenv("MARS_MCP_PERSISTENCE_SQLITE_PATH", str(sqlite_path))
+
+    try:
+        mcp_server._COMPLETED_REQUESTS.clear()
+        mcp_server._IN_FLIGHT_REQUESTS.clear()
+        mcp_server._PLAN_CORRELATION_BY_ID.clear()
+        mcp_server._SIMULATION_CORRELATION_BY_ID.clear()
+        mcp_server._TOOL_METRICS.clear()
+
+        mcp_server._initialize_persistence_backend()
+
+        result = _call_direct_sync(
+            mars_plan(
+                goal=_goal_payload(_goal()),
+                evidence=_evidence_payload(_evidence()),
+                request_id="req-metrics-restore",
+            )
+        )
+        assert result["ok"] is True
+        assert mcp_server._TOOL_METRICS["mars.plan"]["calls"] == pytest.approx(1.0)
+
+        mcp_server._TOOL_METRICS.clear()
+        mcp_server._COMPLETED_REQUESTS.clear()
+        mcp_server._IN_FLIGHT_REQUESTS.clear()
+        mcp_server._PLAN_CORRELATION_BY_ID.clear()
+        mcp_server._SIMULATION_CORRELATION_BY_ID.clear()
+
+        mcp_server._initialize_persistence_backend()
+
+        restored_bucket = mcp_server._TOOL_METRICS["mars.plan"]
+        assert restored_bucket["calls"] == pytest.approx(1.0)
+        assert restored_bucket["successes"] == pytest.approx(1.0)
+    finally:
+        mcp_server._PERSISTENCE_BACKEND_NAME = backend_name_before
+        mcp_server._PERSISTENCE_BACKEND = backend_before
+        mcp_server._COMPLETED_REQUESTS.clear()
+        mcp_server._COMPLETED_REQUESTS.update(completed_before)
+        mcp_server._IN_FLIGHT_REQUESTS.clear()
+        mcp_server._IN_FLIGHT_REQUESTS.update(in_flight_before)
+        mcp_server._PLAN_CORRELATION_BY_ID.clear()
+        mcp_server._PLAN_CORRELATION_BY_ID.update(plan_corr_before)
+        mcp_server._SIMULATION_CORRELATION_BY_ID.clear()
+        mcp_server._SIMULATION_CORRELATION_BY_ID.update(simulation_corr_before)
+        mcp_server._TOOL_METRICS.clear()
+        mcp_server._TOOL_METRICS.update(metrics_before)
+        mcp_server._adapter._plans.clear()
+        mcp_server._adapter._plans.update(plans_before)
+        mcp_server._adapter._simulations.clear()
+        mcp_server._adapter._simulations.update(simulations_before)
+
+
+def test_transport_stdio_sqlite_preserves_tool_error_payload_contract(
+    tmp_path: Path,
+) -> None:
+    sqlite_path = tmp_path / "runtime-state.sqlite3"
+    env = {
+        "MARS_MCP_PERSISTENCE_BACKEND": "sqlite",
+        "MARS_MCP_PERSISTENCE_SQLITE_PATH": str(sqlite_path),
+    }
+
+    failed = _call_tool_stdio_sync(
+        "mars.plan",
+        {
+            "goal": _goal_payload(_goal()),
+            "evidence": [],
+            "request_id": "req-contract-sqlite",
+        },
+        env_overrides=env,
+    )
+
+    assert failed.isError is True
+    payload = _parse_error_payload(_tool_error_text(failed))
+    assert set(payload.keys()) == {"schema_version", "tool", "code", "request_id", "message"}
+    assert payload["tool"] == "mars.plan"
+    assert payload["request_id"] == "req-contract-sqlite"
+
+
 def test_transport_direct_sqlite_unavailable_mid_run_fails_fast_invalid_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

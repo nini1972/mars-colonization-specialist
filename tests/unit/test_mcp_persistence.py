@@ -33,6 +33,15 @@ def _snapshot() -> PersistenceSnapshot:
         in_flight_requests={"req-inflight": ("mars.plan", "fp-inflight")},
         plan_correlation_by_id={"plan-0001": "corr-a"},
         simulation_correlation_by_id={"simulation-0001": "corr-a"},
+        metrics_by_tool={
+            "mars.plan": {
+                "calls": 2.0,
+                "successes": 2.0,
+                "failures": 0.0,
+                "auth_failures": 0.0,
+                "total_latency_ms": 123.45,
+            }
+        },
     )
 
 
@@ -47,6 +56,8 @@ def test_sqlite_persistence_round_trip_preserves_runtime_snapshot(tmp_path: Path
     assert reloaded.in_flight_requests["req-inflight"] == ("mars.plan", "fp-inflight")
     assert reloaded.plan_correlation_by_id["plan-0001"] == "corr-a"
     assert reloaded.simulation_correlation_by_id["simulation-0001"] == "corr-a"
+    assert reloaded.metrics_by_tool["mars.plan"]["calls"] == pytest.approx(2.0)
+    assert reloaded.metrics_by_tool["mars.plan"]["total_latency_ms"] == pytest.approx(123.45)
 
 
 def test_sqlite_persistence_schema_version_guard_rejects_unknown_version(tmp_path: Path) -> None:

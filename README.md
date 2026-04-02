@@ -101,3 +101,7 @@ The MCP server now emits structured observability signals while preserving the e
 - Deterministic ordering:
   - Idempotency eviction uses stable ordering (`completed_at_monotonic`, then `request_id`).
   - Replay/conflict behavior remains deterministic across restarts.
+- Internal metrics persistence (Issue #4 optional stretch):
+  - Internal tool metrics counters now persist across restart when the SQLite backend is enabled.
+  - This remains internal-only and does not change MCP success payload shape.
+  - ToolError payload shape and structured stderr log schema remain unchanged.

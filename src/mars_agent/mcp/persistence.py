@@ -29,6 +29,7 @@ class PersistenceSnapshot:
     in_flight_requests: dict[str, tuple[str, str]]
     plan_correlation_by_id: dict[str, str]
     simulation_correlation_by_id: dict[str, str]
+    metrics_by_tool: dict[str, dict[str, float]]
 
 
 class PersistenceUnavailableError(RuntimeError):
@@ -106,6 +107,16 @@ class SQLitePersistenceBackend:
                     CREATE TABLE IF NOT EXISTS simulation_correlations (
                         simulation_id TEXT PRIMARY KEY,
                         correlation_id TEXT NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tool_metrics (
+                        tool_name TEXT NOT NULL,
+                        metric_key TEXT NOT NULL,
+                        metric_value REAL NOT NULL,
+                        PRIMARY KEY (tool_name, metric_key)
                     )
                     """
                 )
@@ -188,11 +199,25 @@ class SQLitePersistenceBackend:
                         row["correlation_id"]
                     )
 
+                metrics_by_tool: dict[str, dict[str, float]] = {}
+                for row in cursor.execute(
+                    """
+                    SELECT tool_name, metric_key, metric_value
+                    FROM tool_metrics
+                    ORDER BY tool_name ASC, metric_key ASC
+                    """
+                ):
+                    tool_name = str(row["tool_name"])
+                    metric_key = str(row["metric_key"])
+                    metric_value = float(row["metric_value"])
+                    metrics_by_tool.setdefault(tool_name, {})[metric_key] = metric_value
+
                 return PersistenceSnapshot(
                     completed_requests=completed_requests,
                     in_flight_requests=in_flight_requests,
                     plan_correlation_by_id=plan_correlation_by_id,
                     simulation_correlation_by_id=simulation_correlation_by_id,
+                    metrics_by_tool=metrics_by_tool,
                 )
         except sqlite3.Error as exc:
             raise self._translate_sqlite_error(exc) from exc
@@ -207,6 +232,7 @@ class SQLitePersistenceBackend:
                 cursor.execute("DELETE FROM in_flight_requests")
                 cursor.execute("DELETE FROM plan_correlations")
                 cursor.execute("DELETE FROM simulation_correlations")
+                cursor.execute("DELETE FROM tool_metrics")
 
                 for request_id in sorted(snapshot.completed_requests):
                     entry = snapshot.completed_requests[request_id]
@@ -261,6 +287,17 @@ class SQLitePersistenceBackend:
                         """,
                         (simulation_id, snapshot.simulation_correlation_by_id[simulation_id]),
                     )
+
+                for tool_name in sorted(snapshot.metrics_by_tool):
+                    metrics = snapshot.metrics_by_tool[tool_name]
+                    for metric_key in sorted(metrics):
+                        cursor.execute(
+                            """
+                            INSERT INTO tool_metrics (tool_name, metric_key, metric_value)
+                            VALUES (?, ?, ?)
+                            """,
+                            (tool_name, metric_key, metrics[metric_key]),
+                        )
         except sqlite3.Error as exc:
             raise self._translate_sqlite_error(exc) from exc
 
