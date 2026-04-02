@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Mission Ops Dashboard{% endblock %}
+
+{% block body %}
+<section class="header">
+  <h1>Mission Ops Dashboard</h1>
+  <p class="meta">UI schema version: <strong>{{ ui_schema_version }}</strong></p>
+</section>
+
+{% if degraded %}
+<div class="banner banner-warn" role="status">
+  Persistence is degraded. Some runtime continuity features are operating in fallback mode.
+</div>
+{% endif %}
+
+<section class="grid">
+  <article class="card" id="overview-panel" hx-get="/dashboard/fragments/overview" hx-trigger="load, every 10s" hx-swap="innerHTML">
+    <div class="skeleton">Loading overview...</div>
+  </article>
+
+  <article class="card" x-data="{ loadingReplay: false }">
+    <header class="card-head">
+      <h2>Replay and Degraded State</h2>
+      <button
+        class="btn"
+        hx-get="/dashboard/fragments/replay"
+        hx-target="#replay-panel"
+        hx-swap="innerHTML"
+        @htmx:before-request="loadingReplay = true"
+        @htmx:after-request="loadingReplay = false"
+      >Refresh</button>
+    </header>
+    <div x-show="loadingReplay" class="spinner" aria-live="polite">Refreshing replay indicators...</div>
+    <div id="replay-panel" hx-get="/dashboard/fragments/replay" hx-trigger="load" hx-swap="innerHTML">
+      <div class="skeleton">Loading replay state...</div>
+    </div>
+  </article>
+</section>
+
+<section class="card" x-data="{ loadingInvocations: false }">
+  <header class="card-head">
+    <h2>Invocation Stream</h2>
+  </header>
+  <div x-show="loadingInvocations" class="spinner" aria-live="polite">Loading invocation details...</div>
+  <div
+    id="invocations-panel"
+    hx-get="/dashboard/fragments/invocations?page=1&page_size=20"
+    hx-trigger="load"
+    hx-swap="innerHTML"
+    @htmx:before-request="loadingInvocations = true"
+    @htmx:after-request="loadingInvocations = false"
+  >
+    <div class="skeleton">Loading invocations...</div>
+  </div>
+</section>
+
+<section class="card" x-data="{ open: true, loadingChain: false }">
+  <header class="card-head">
+    <h2>Correlation Drill-Down</h2>
+    <button class="btn" @click="open = !open" x-text="open ? 'Collapse' : 'Expand'"></button>
+  </header>
+  <form class="inline-form" x-show="open" hx-get="/dashboard/fragments/correlation" hx-target="#correlation-panel" hx-swap="innerHTML" @htmx:before-request="loadingChain = true" @htmx:after-request="loadingChain = false">
+    <label for="corr-id">Correlation ID</label>
+    <input id="corr-id" type="text" name="correlation_id" placeholder="Enter correlation ID" required>
+    <button type="submit" class="btn">Load Chain</button>
+  </form>
+  <div x-show="loadingChain" class="spinner" aria-live="polite">Loading correlation chain...</div>
+  <div id="correlation-panel">
+    <p class="muted">Submit a correlation ID to inspect the chain.</p>
+  </div>
+</section>
+{% endblock %}

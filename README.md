@@ -105,3 +105,16 @@ The MCP server now emits structured observability signals while preserving the e
   - Internal tool metrics counters now persist across restart when the SQLite backend is enabled.
   - This remains internal-only and does not change MCP success payload shape.
   - ToolError payload shape and structured stderr log schema remain unchanged.
+
+## Phase 9B Dashboard (Increment 1)
+
+- Server-rendered dashboard stack: FastAPI + Jinja2 templates + HTMX fragments + Alpine.js micro-state.
+- UI schema version: `1.0` exposed in page and JSON endpoint responses for operator/debug clarity.
+- Main page route: `/dashboard`
+- JSON API route: `/api/telemetry/dashboard`
+- Fragment routes:
+  - `/dashboard/fragments/overview`
+  - `/dashboard/fragments/invocations`
+  - `/dashboard/fragments/invocation-detail`
+  - `/dashboard/fragments/correlation`
+  - `/dashboard/fragments/replay`

@@ -1,0 +1,59 @@
+{% set items = invocations["items"] %}
+<div class="fragment" data-fragment="invocations" data-fragment-required="schema_version,items,page,page_size,total,has_next_page" data-fragment-allowed="schema_version,items,page,page_size,total,has_next_page">
+  <header class="card-head">
+    <h2>Invocations</h2>
+    <span class="pill">{{ invocations["total"] }} total</span>
+  </header>
+
+  <form class="inline-form" hx-get="/dashboard/fragments/invocations" hx-target="#invocations-panel" hx-swap="innerHTML">
+    <label for="tool-filter">Tool</label>
+    <input id="tool-filter" name="tool" value="{{ query['tool'] }}" placeholder="mars.plan">
+    <label for="outcome-filter">Outcome</label>
+    <input id="outcome-filter" name="outcome" value="{{ query['outcome'] }}" placeholder="success/failure">
+    <label for="error-filter">Error</label>
+    <input id="error-filter" name="error_code" value="{{ query['error_code'] }}" placeholder="invalid_request">
+    <input type="hidden" name="page" value="1">
+    <input type="hidden" name="page_size" value="{{ invocations['page_size'] }}">
+    <button type="submit" class="btn">Apply</button>
+  </form>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Recorded At</th>
+        <th>Tool</th>
+        <th>Request</th>
+        <th>Outcome</th>
+        <th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item["recorded_at"] }}</td>
+        <td>{{ item["tool"] }}</td>
+        <td>
+          <button
+            class="link-btn"
+            hx-get="/dashboard/fragments/invocation-detail?request_id={{ item['request_id'] }}"
+            hx-target="#invocation-detail-modal-body"
+            hx-swap="innerHTML"
+          >{{ item["request_id"] }}</button>
+        </td>
+        <td>{{ item["outcome"] }}</td>
+        <td>{{ item["error_code"] or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <footer class="pagination">
+    <span>Page {{ invocations["page"] }}</span>
+    {% if invocations["page"] > 1 %}
+      <button class="btn" hx-get="/dashboard/fragments/invocations?page={{ invocations['page'] - 1 }}&page_size={{ invocations['page_size'] }}&tool={{ query['tool'] }}&outcome={{ query['outcome'] }}&error_code={{ query['error_code'] }}" hx-target="#invocations-panel" hx-swap="innerHTML">Previous</button>
+    {% endif %}
+    {% if invocations["has_next_page"] %}
+      <button class="btn" hx-get="/dashboard/fragments/invocations?page={{ invocations['page'] + 1 }}&page_size={{ invocations['page_size'] }}&tool={{ query['tool'] }}&outcome={{ query['outcome'] }}&error_code={{ query['error_code'] }}" hx-target="#invocations-panel" hx-swap="innerHTML">Next</button>
+    {% endif %}
+  </footer>
+</div>

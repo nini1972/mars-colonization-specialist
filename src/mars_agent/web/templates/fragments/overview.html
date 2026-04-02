@@ -1,0 +1,35 @@
+{% set health = overview["health"] %}
+{% set counts = overview["counts"] %}
+<div class="fragment" data-fragment="overview" data-fragment-required="schema_version,health,counts" data-fragment-allowed="schema_version,health,counts">
+  <header class="card-head">
+    <h2>Overview</h2>
+    <span class="pill">Telemetry schema {{ overview["schema_version"] }}</span>
+  </header>
+
+  {% if degraded %}
+  <div class="banner banner-warn" role="status">Persistence is degraded.</div>
+  {% endif %}
+
+  <div class="stats">
+    <div class="stat">
+      <label>Status</label>
+      <strong class="status status-{{ health['status'] }}">{{ health["status"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Latest Event</label>
+      <strong>{{ health["latest_recorded_at"] or "n/a" }}</strong>
+    </div>
+    <div class="stat">
+      <label>Events</label>
+      <strong>{{ counts["events"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Successes</label>
+      <strong>{{ counts["successes"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Failures</label>
+      <strong>{{ counts["failures"] }}</strong>
+    </div>
+  </div>
+</div>

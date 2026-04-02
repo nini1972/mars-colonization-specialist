@@ -1,0 +1,13 @@
+{% if detail %}
+<div class="fragment" data-fragment="invocation-detail">
+  <header class="card-head">
+    <h2>Invocation Detail</h2>
+    <span class="pill">{{ request_id }}</span>
+  </header>
+  <pre>{{ detail | tojson(indent=2) }}</pre>
+</div>
+{% else %}
+<div class="fragment" data-fragment="invocation-detail-empty">
+  <p class="muted">No invocation found for {{ request_id }}.</p>
+</div>
+{% endif %}

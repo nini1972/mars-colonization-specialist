@@ -1,0 +1,14 @@
+<div class="fragment" data-fragment="replay" data-fragment-required="persistence_backend,persistence_degraded,idempotency_completed_entries,idempotency_in_flight_entries" data-fragment-allowed="persistence_backend,persistence_degraded,idempotency_completed_entries,idempotency_in_flight_entries">
+  {% if degraded %}
+  <div class="banner banner-warn" role="status">
+    Persistence backend is degraded ({{ replay["persistence_backend"] }}).
+  </div>
+  {% endif %}
+
+  <ul class="keyvals">
+    <li><span>Persistence backend</span><strong>{{ replay["persistence_backend"] }}</strong></li>
+    <li><span>Degraded</span><strong>{{ replay["persistence_degraded"] }}</strong></li>
+    <li><span>Idempotency completed</span><strong>{{ replay["idempotency_completed_entries"] }}</strong></li>
+    <li><span>Idempotency in-flight</span><strong>{{ replay["idempotency_in_flight_entries"] }}</strong></li>
+  </ul>
+</div>

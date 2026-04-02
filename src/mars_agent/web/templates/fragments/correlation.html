@@ -1,0 +1,21 @@
+{% set items = chain["items"] %}
+<div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items" data-fragment-allowed="schema_version,correlation_id,items">
+  <header class="card-head">
+    <h2>Correlation Chain</h2>
+    <span class="pill">{{ correlation_id }}</span>
+  </header>
+  {% if items %}
+  <ul class="timeline">
+    {% for item in items %}
+    <li>
+      <span>{{ item["recorded_at"] }}</span>
+      <strong>{{ item["tool"] }}</strong>
+      <em>{{ item["outcome"] }}</em>
+      {% if item["error_code"] %}<code>{{ item["error_code"] }}</code>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No events found for this correlation ID.</p>
+  {% endif %}
+</div>
