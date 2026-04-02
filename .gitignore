@@ -10,3 +10,8 @@ __pycache__/
 
 # Ignore the .vscode directory
 .vscode/
+
+.venv/
+*.egg-info/
+
+
