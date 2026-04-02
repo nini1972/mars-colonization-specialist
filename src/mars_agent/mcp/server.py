@@ -36,6 +36,7 @@ from mars_agent.mcp.persistence import (
     PersistenceUnavailableError,
     SQLitePersistenceBackend,
 )
+from mars_agent.mcp.telemetry import TelemetryQueryService
 from mars_agent.orchestration import MissionGoal
 from mars_agent.orchestration.models import PlanResult
 from mars_agent.reasoning.models import EvidenceReference
@@ -59,16 +60,22 @@ _DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
 _DEFAULT_PERSISTENCE_BACKEND = "memory"
 _DEFAULT_PERSISTENCE_SQLITE_PATH = ".mars_mcp_runtime.sqlite3"
 _TOOL_METRIC_KEYS = ("calls", "successes", "failures", "auth_failures", "total_latency_ms")
-_ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark"}
+_ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark", "telemetry"}
 _TOOL_PERMISSION_BY_NAME = {
     "mars.plan": "plan",
     "mars.simulate": "simulate",
     "mars.governance": "governance",
     "mars.benchmark": "benchmark",
+    "mars.telemetry.overview": "telemetry",
+    "mars.telemetry.events": "telemetry",
+    "mars.telemetry.invocation": "telemetry",
+    "mars.telemetry.correlation": "telemetry",
+    "mars.telemetry.dashboard": "telemetry",
 }
 _TOOL_METRICS: dict[str, dict[str, float]] = {}
 _PLAN_CORRELATION_BY_ID: dict[str, str] = {}
 _SIMULATION_CORRELATION_BY_ID: dict[str, str] = {}
+_TELEMETRY = TelemetryQueryService()
 
 
 _COMPLETED_REQUESTS: dict[str, IdempotencyEntry] = {}
@@ -420,7 +427,46 @@ def _resolve_correlation_id(
 
 
 def _emit_stderr_log(record: Mapping[str, object]) -> None:
+    _TELEMETRY.record(record)
     print(json.dumps(record, sort_keys=True), file=sys.stderr, flush=True)
+
+
+def telemetry_list_events(
+    *,
+    tool: str | None = None,
+    outcome: str | None = None,
+    error_code: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, object]:
+    return _TELEMETRY.list_events(
+        tool=tool,
+        outcome=outcome,
+        error_code=error_code,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def telemetry_invocation_detail(request_id: str) -> dict[str, object] | None:
+    return _TELEMETRY.invocation_detail(request_id)
+
+
+def telemetry_correlation_chain(correlation_id: str) -> dict[str, object]:
+    return _TELEMETRY.correlation_chain(correlation_id)
+
+
+def telemetry_overview() -> dict[str, object]:
+    return _TELEMETRY.overview()
+
+
+def telemetry_dashboard_snapshot(*, page_size: int = 20) -> dict[str, object]:
+    return _TELEMETRY.dashboard_snapshot(
+        page_size=page_size,
+        persistence_backend=_PERSISTENCE_BACKEND_NAME,
+        idempotency_completed_entries=len(_COMPLETED_REQUESTS),
+        idempotency_in_flight_entries=len(_IN_FLIGHT_REQUESTS),
+    )
 
 
 def _record_metric(
@@ -608,6 +654,38 @@ def _validate_transport_arguments(tool_name: str, arguments: Mapping[str, object
         _require_string(arguments, "simulation_id")
         return
 
+    if tool_name == "mars.telemetry.overview":
+        return
+
+    if tool_name == "mars.telemetry.events":
+        if "tool" in arguments and arguments["tool"] is not None:
+            _require_string(arguments, "tool")
+        if "outcome" in arguments and arguments["outcome"] is not None:
+            _require_string(arguments, "outcome")
+        if "error_code" in arguments and arguments["error_code"] is not None:
+            _require_string(arguments, "error_code")
+        page = _optional_int(arguments, "page", 1)
+        page_size = _optional_int(arguments, "page_size", 50)
+        if page <= 0:
+            raise ValueError("Argument 'page' must be greater than zero")
+        if page_size <= 0:
+            raise ValueError("Argument 'page_size' must be greater than zero")
+        return
+
+    if tool_name == "mars.telemetry.invocation":
+        _require_string(arguments, "invocation_request_id")
+        return
+
+    if tool_name == "mars.telemetry.correlation":
+        _require_string(arguments, "correlation_id")
+        return
+
+    if tool_name == "mars.telemetry.dashboard":
+        page_size = _optional_int(arguments, "page_size", 20)
+        if page_size <= 0:
+            raise ValueError("Argument 'page_size' must be greater than zero")
+        return
+
     raise KeyError(f"Unsupported MCP tool: {tool_name}")
 
 
@@ -706,6 +784,33 @@ async def _invoke_runtime_tool(
     tool_name: str,
     arguments: Mapping[str, object],
 ) -> dict[str, object]:
+    if tool_name == "mars.telemetry.overview":
+        return {"overview": telemetry_overview()}
+
+    if tool_name == "mars.telemetry.events":
+        return {
+            "events": telemetry_list_events(
+                tool=cast(str | None, arguments.get("tool")),
+                outcome=cast(str | None, arguments.get("outcome")),
+                error_code=cast(str | None, arguments.get("error_code")),
+                page=_optional_int(arguments, "page", 1),
+                page_size=_optional_int(arguments, "page_size", 50),
+            )
+        }
+
+    if tool_name == "mars.telemetry.invocation":
+        invocation_request_id = _require_string(arguments, "invocation_request_id")
+        detail = telemetry_invocation_detail(invocation_request_id)
+        return {"invocation": detail}
+
+    if tool_name == "mars.telemetry.correlation":
+        correlation_id = _require_string(arguments, "correlation_id")
+        return {"correlation": telemetry_correlation_chain(correlation_id)}
+
+    if tool_name == "mars.telemetry.dashboard":
+        page_size = _optional_int(arguments, "page_size", 20)
+        return {"dashboard": telemetry_dashboard_snapshot(page_size=page_size)}
+
     if tool_name == "mars.plan":
         goal = _parse_goal(_require_mapping(arguments, "goal"))
         evidence = _parse_evidence(arguments)
@@ -1151,7 +1256,96 @@ async def mars_benchmark(
     )
 
 
+async def mars_telemetry_overview(
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """Return telemetry health and aggregate counters."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.telemetry.overview",
+        arguments={},
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
+async def mars_telemetry_events(
+    tool: str | None = None,
+    outcome: str | None = None,
+    error_code: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """List telemetry events with deterministic ordering, filtering, and pagination."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.telemetry.events",
+        arguments={
+            "tool": tool,
+            "outcome": outcome,
+            "error_code": error_code,
+            "page": page,
+            "page_size": page_size,
+        },
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
+async def mars_telemetry_invocation(
+    invocation_request_id: str,
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """Return a single invocation detail view by request_id."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.telemetry.invocation",
+        arguments={"invocation_request_id": invocation_request_id},
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
+async def mars_telemetry_correlation(
+    correlation_id: str,
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """Return correlation chain drill-down view by correlation_id."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.telemetry.correlation",
+        arguments={"correlation_id": correlation_id},
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
+async def mars_telemetry_dashboard(
+    page_size: int = 20,
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """Return Week 1 mission-ops dashboard skeleton panels."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.telemetry.dashboard",
+        arguments={"page_size": page_size},
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
 mcp.tool(name="mars.plan")(mars_plan)
 mcp.tool(name="mars.simulate")(mars_simulate)
 mcp.tool(name="mars.governance")(mars_governance)
 mcp.tool(name="mars.benchmark")(mars_benchmark)
+mcp.tool(name="mars.telemetry.overview")(mars_telemetry_overview)
+mcp.tool(name="mars.telemetry.events")(mars_telemetry_events)
+mcp.tool(name="mars.telemetry.invocation")(mars_telemetry_invocation)
+mcp.tool(name="mars.telemetry.correlation")(mars_telemetry_correlation)
+mcp.tool(name="mars.telemetry.dashboard")(mars_telemetry_dashboard)
