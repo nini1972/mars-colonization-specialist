@@ -259,3 +259,217 @@ def test_fragment_integrity_markers_exist_for_all_fragment_routes(
         assert "data-fragment" in payload
         assert "data-fragment-required" in payload
         assert "data-fragment-allowed" in payload
+
+
+def test_invocation_list_opens_modal_via_custom_event(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_invocations(monkeypatch)
+
+    response = client.get("/dashboard/fragments/invocations?page=1&page_size=20")
+
+    assert response.status_code == 200
+    assert "open-invocation-modal" in response.text
+    assert "#invocation-detail-modal-body" in response.text
+
+
+def test_dashboard_has_modal_loading_skeleton_and_close_control(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dashboard_snapshot(monkeypatch)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "Loading modal content" in response.text
+    assert "@click=\"modalOpen = false\"" in response.text
+
+
+def test_invocation_detail_fragment_renders_breadcrumb_and_replay_badge(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_invocation_detail",
+        lambda request_id: {
+            "schema_version": "1.0",
+            "item": {
+                "request_id": request_id,
+                "recorded_at": "2026-04-02T12:00:00.000+00:00",
+                "event": "tool.success",
+                "tool": "mars.plan",
+                "correlation_id": "corr-42",
+                "mission_id": "mars-alpha",
+                "outcome": "success",
+                "latency_ms": 9.5,
+                "auth_enabled": True,
+                "error_code": None,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_list_events",
+        lambda **_: {
+            "schema_version": "1.0",
+            "items": [
+                {"request_id": "req-1", "event": "tool.success"},
+                {"request_id": "req-1", "event": "tool.success"},
+                {"request_id": "req-1", "event": "tool.start"},
+            ],
+            "page": 1,
+            "page_size": 50,
+            "total": 3,
+            "has_next_page": False,
+        },
+    )
+
+    response = client.get("/dashboard/fragments/invocation-detail?request_id=req-1")
+
+    assert response.status_code == 200
+    assert "Mission Ops / Invocation Detail" in response.text
+    assert "Planning" in response.text
+    assert "Replayed" in response.text
+    assert "Chain mini-map" in response.text
+
+
+def test_invocation_detail_fragment_uses_conflict_rejected_badge(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_invocation_detail",
+        lambda request_id: {
+            "schema_version": "1.0",
+            "item": {
+                "request_id": request_id,
+                "recorded_at": "2026-04-02T12:00:00.000+00:00",
+                "event": "tool.error",
+                "tool": "mars.simulate",
+                "correlation_id": "corr-11",
+                "mission_id": "mars-alpha",
+                "outcome": "failure",
+                "latency_ms": 13.0,
+                "auth_enabled": True,
+                "error_code": "invalid_request",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_list_events",
+        lambda **_: {
+            "schema_version": "1.0",
+            "items": [{"request_id": "req-conflict", "event": "tool.error"}],
+            "page": 1,
+            "page_size": 50,
+            "total": 1,
+            "has_next_page": False,
+        },
+    )
+
+    response = client.get("/dashboard/fragments/invocation-detail?request_id=req-conflict")
+
+    assert response.status_code == 200
+    assert "Conflict-rejected" in response.text
+
+
+def test_invocation_detail_fragment_empty_state_shape(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard_app, "telemetry_invocation_detail", lambda request_id: None)
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_list_events",
+        lambda **_: {
+            "schema_version": "1.0",
+            "items": [],
+            "page": 1,
+            "page_size": 50,
+            "total": 0,
+            "has_next_page": False,
+        },
+    )
+
+    response = client.get("/dashboard/fragments/invocation-detail?request_id=req-missing")
+
+    assert response.status_code == 200
+    assert "No invocation found" in response.text
+    assert "data-fragment=\"invocation-detail-empty\"" in response.text
+
+
+def test_correlation_fragment_renders_integrity_warning_for_partial_chain(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-02T10:01:00.000+00:00",
+                    "request_id": "req-gov",
+                    "event": "tool.success",
+                    "tool": "mars.governance",
+                    "outcome": "success",
+                    "error_code": None,
+                }
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-partial")
+
+    assert response.status_code == 200
+    assert "integrity-partial" in response.text
+    assert "Integrity issues:" in response.text
+    assert "missing_upstream" in response.text
+
+
+def test_correlation_fragment_orders_items_deterministically(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-02T10:02:00.000+00:00",
+                    "request_id": "req-z",
+                    "event": "tool.success",
+                    "tool": "mars.benchmark",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:00:00.000+00:00",
+                    "request_id": "req-a",
+                    "event": "tool.success",
+                    "tool": "mars.plan",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-order")
+
+    assert response.status_code == 200
+    first = response.text.find("mars.plan")
+    second = response.text.find("mars.benchmark")
+    assert first != -1
+    assert second != -1
+    assert first < second
