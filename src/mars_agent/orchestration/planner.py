@@ -14,6 +14,7 @@ from mars_agent.orchestration.models import (
     ReadinessSignals,
     ReplanEvent,
 )
+from mars_agent.orchestration.negotiator import MultiAgentNegotiator
 from mars_agent.orchestration.state_machine import MissionPhaseStateMachine
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import (
@@ -51,6 +52,7 @@ class CentralPlanner:
     coupling_checker: CouplingChecker = field(default_factory=CouplingChecker)
     state_machine: MissionPhaseStateMachine = field(default_factory=MissionPhaseStateMachine)
     settings: PlannerSettings = field(default_factory=PlannerSettings)
+    negotiator: MultiAgentNegotiator = field(default_factory=MultiAgentNegotiator)
 
     def _eclss_request(
         self,
@@ -279,15 +281,31 @@ class CentralPlanner:
                 break
 
             if attempt < self.settings.max_replan_attempts:
+                # Ask orchestrator agent to negotiate a new reduction
+                accepted, new_reduction, rationale = self.negotiator.negotiate(
+                    goal=goal,
+                    conflicts=conflicts,
+                    current_reduction=current_reduction,
+                )
+
+                # If the agent isn't enabled or failed, fall back to deterministic strategy
+                if not accepted:
+                    new_reduction = min(
+                        0.8,
+                        current_reduction + self.settings.replan_feedstock_reduction,
+                    )
+                    rationale = (
+                        "Detected cross-domain conflicts; "
+                        "reducing ISRU feedstock demand (deterministic fallback)."
+                    )
+
+                current_reduction = max(current_reduction, new_reduction)
+
                 replan_events.append(
                     ReplanEvent(
                         attempt=attempt + 1,
-                        reason="Detected cross-domain conflicts; reducing ISRU feedstock demand.",
+                        reason=rationale,
                     )
-                )
-                current_reduction = min(
-                    0.8,
-                    current_reduction + self.settings.replan_feedstock_reduction,
                 )
 
         readiness = self._readiness(eclss_response, isru_response, power_response)
