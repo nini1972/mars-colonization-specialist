@@ -246,6 +246,122 @@ def _invocation_detail_view_model(request_id: str) -> dict[str, object]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Correlation chain helpers
+# ---------------------------------------------------------------------------
+
+_CORRELATION_SEQUENCE = ["mars.plan", "mars.simulate", "mars.governance", "mars.benchmark"]
+_CORRELATION_INDEX: dict[str, int] = {t: i for i, t in enumerate(_CORRELATION_SEQUENCE)}
+_CORRELATION_LABELS: dict[str, str] = {
+    "mars.plan": "Plan",
+    "mars.simulate": "Simulate",
+    "mars.governance": "Governance",
+    "mars.benchmark": "Benchmark",
+}
+
+
+def _extract_ordered_chain_items(chain: Mapping[str, object]) -> list[dict[str, object]]:
+    items_raw = chain.get("items")
+    if not isinstance(items_raw, list):
+        raise ValueError("Invalid correlation chain items: expected list")
+    items = [dict(_ensure_mapping(item, label="correlation_chain.item")) for item in items_raw]
+    return sorted(
+        items,
+        key=lambda item: (
+            str(item.get("recorded_at", "")),
+            str(item.get("request_id", "")),
+            str(item.get("event", "")),
+        ),
+    )
+
+
+def _check_sequence_bounds(recognized: list[str]) -> list[str]:
+    """Return missing_upstream / missing_downstream issues."""
+    issues: list[str] = []
+    if recognized[0] != "mars.plan":
+        issues.append("missing_upstream")
+    if recognized[-1] != "mars.benchmark":
+        issues.append("missing_downstream")
+    return issues
+
+
+def _check_sequence_order(recognized: list[str]) -> list[str]:
+    """Return order_violation if tools appear out of expected sequence order."""
+    has_violation = any(
+        _CORRELATION_INDEX[recognized[i]] < _CORRELATION_INDEX[recognized[i - 1]]
+        for i in range(1, len(recognized))
+    )
+    return ["order_violation"] if has_violation else []
+
+
+def _simulate_missing_issues(present: set[str]) -> list[str]:
+    """Return orphaned_child / missing_node when simulate is absent but later steps exist."""
+    if "mars.simulate" in present:
+        return []
+    issues: list[str] = []
+    downstream = {"mars.governance", "mars.benchmark"} & present
+    if downstream:
+        issues.append("missing_node")
+        issues.append("orphaned_child")
+    return issues
+
+
+def _check_cycle(recognized: list[str], ordered: list[dict[str, object]]) -> bool:
+    """True if any tool's first event timestamp precedes the previous tool's timestamp."""
+    recognized_ts = [
+        str(next(it.get("recorded_at", "") for it in ordered if str(it.get("tool", "")) == t))
+        for t in recognized
+    ]
+    return any(recognized_ts[i] < recognized_ts[i - 1] for i in range(1, len(recognized_ts)))
+
+
+def _chain_integrity_issues(
+    recognized: list[str],
+    ordered: list[dict[str, object]],
+    present: set[str],
+) -> list[str]:
+    if not recognized:
+        return ["empty_chain"]
+    issues = [
+        *_check_sequence_bounds(recognized),
+        *_check_sequence_order(recognized),
+        *_simulate_missing_issues(present),
+    ]
+    if _check_cycle(recognized, ordered):
+        issues.append("cycle")
+    return issues
+
+
+def _build_dag_nodes(
+    present: set[str],
+    ordered: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    events_by_tool: dict[str, list[dict[str, object]]] = {}
+    for item in ordered:
+        t = str(item.get("tool", ""))
+        if t in _CORRELATION_INDEX:
+            events_by_tool.setdefault(t, []).append(item)
+    nodes: list[dict[str, object]] = []
+    for tool in _CORRELATION_SEQUENCE:
+        tool_events = events_by_tool.get(tool, [])
+        if tool not in present:
+            node_status = "missing"
+        elif tool in ("mars.governance", "mars.benchmark") and "mars.simulate" not in present:
+            node_status = "orphaned"
+        else:
+            node_status = "present"
+        nodes.append(
+            {
+                "tool": tool,
+                "label": _CORRELATION_LABELS[tool],
+                "status": node_status,
+                "event_count": len(tool_events),
+                "latest_at": tool_events[-1].get("recorded_at") if tool_events else None,
+            }
+        )
+    return nodes
+
+
 def _correlation_view_model(correlation_id: str) -> dict[str, object]:
     chain_raw = telemetry_correlation_chain(correlation_id)
     chain = _ensure_mapping(chain_raw, label="correlation_chain")
@@ -256,52 +372,18 @@ def _correlation_view_model(correlation_id: str) -> dict[str, object]:
         label="correlation_chain",
     )
 
-    items_raw = chain.get("items")
-    if not isinstance(items_raw, list):
-        raise ValueError("Invalid correlation chain items: expected list")
-
-    items: list[dict[str, object]] = [
-        dict(_ensure_mapping(item, label="correlation_chain.item")) for item in items_raw
-    ]
-    ordered = sorted(
-        items,
-        key=lambda item: (
-            str(item.get("recorded_at", "")),
-            str(item.get("request_id", "")),
-            str(item.get("event", "")),
-        ),
-    )
-
-    expected_sequence = ["mars.plan", "mars.simulate", "mars.governance", "mars.benchmark"]
-    expected_index = {tool: idx for idx, tool in enumerate(expected_sequence)}
+    ordered = _extract_ordered_chain_items(chain)
     tool_sequence = [str(item.get("tool", "")) for item in ordered if str(item.get("tool", ""))]
-    recognized = [tool for tool in tool_sequence if tool in expected_index]
+    recognized = [tool for tool in tool_sequence if tool in _CORRELATION_INDEX]
+    present = set(recognized)
 
-    issues: list[str] = []
-    if recognized:
-        if recognized[0] != "mars.plan":
-            issues.append("missing_upstream")
-        if recognized[-1] != "mars.benchmark":
-            issues.append("missing_downstream")
-        if any(
-            expected_index[recognized[i]] < expected_index[recognized[i - 1]]
-            for i in range(1, len(recognized))
-        ):
-            issues.append("order_violation")
-
-        present = set(recognized)
-        if "mars.governance" in present and "mars.simulate" not in present:
-            issues.append("orphaned_child")
-        if "mars.benchmark" in present and "mars.simulate" not in present:
-            issues.append("orphaned_child")
-    else:
-        issues.append("empty_chain")
-
+    issues = _chain_integrity_issues(recognized, ordered, present)
     integrity_status = "complete" if not issues else "partial"
     return {
         "schema_version": chain.get("schema_version"),
         "correlation_id": chain.get("correlation_id", correlation_id),
         "items": ordered,
+        "nodes": _build_dag_nodes(present, ordered),
         "integrity": {
             "status": integrity_status,
             "issues": sorted(set(issues)),

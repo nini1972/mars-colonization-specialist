@@ -1,5 +1,6 @@
 {% set items = chain["items"] %}
-<div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items,integrity" data-fragment-allowed="schema_version,correlation_id,items,integrity">
+{% set nodes = chain["nodes"] %}
+<div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items,integrity,nodes" data-fragment-allowed="schema_version,correlation_id,items,integrity,nodes">
   <header class="card-head">
     <h2>Correlation Chain</h2>
     <div>
@@ -14,6 +15,35 @@
   {% if chain["integrity"]["issues"] %}
   <p class="muted">Integrity issues: {{ chain["integrity"]["issues"] | join(", ") }}</p>
   {% endif %}
+
+  <div class="dag-graph" x-data>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 90" aria-label="Correlation chain DAG" role="img">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#c9d5c2"/>
+        </marker>
+      </defs>
+      <line class="dag-edge" x1="63" y1="35" x2="117" y2="35" marker-end="url(#arrow)"/>
+      <line class="dag-edge" x1="173" y1="35" x2="227" y2="35" marker-end="url(#arrow)"/>
+      <line class="dag-edge" x1="283" y1="35" x2="337" y2="35" marker-end="url(#arrow)"/>
+      {% set cx_values = [35, 145, 255, 365] %}
+      {% for node in nodes %}
+      {% set cx = cx_values[loop.index0] %}
+      <g class="dag-node-{{ node['status'] }}"
+         role="img"
+         aria-label="{{ node['label'] }}: {{ node['status'] }}, {{ node['event_count'] }} event(s){% if node['latest_at'] %}, last at {{ node['latest_at'] }}{% endif %}">
+        <circle cx="{{ cx }}" cy="35" r="26"/>
+        <text x="{{ cx }}" y="39" text-anchor="middle" font-size="9" font-family="inherit">{{ node["label"] }}</text>
+        <title>{{ node["label"] }} · {{ node["status"] }} · {{ node["event_count"] }} event(s){% if node["latest_at"] %} · {{ node["latest_at"] }}{% endif %}</title>
+      </g>
+      {% endfor %}
+    </svg>
+    <div class="dag-legend">
+      <span class="dag-legend-item dag-legend-present">present</span>
+      <span class="dag-legend-item dag-legend-missing">missing</span>
+      <span class="dag-legend-item dag-legend-orphaned">orphaned</span>
+    </div>
+  </div>
 
   {% if items %}
   <ul class="timeline">
@@ -30,3 +60,4 @@
   <p class="muted">No events found for this correlation ID.</p>
   {% endif %}
 </div>
+

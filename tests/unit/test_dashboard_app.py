@@ -473,3 +473,147 @@ def test_correlation_fragment_orders_items_deterministically(
     assert first != -1
     assert second != -1
     assert first < second
+
+
+def test_correlation_dag_nodes_present_in_view_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full happy-path chain emits four dag-node-present circles."""
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-02T10:00:00.000+00:00",
+                    "request_id": "req-1",
+                    "event": "tool.success",
+                    "tool": "mars.plan",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:01:00.000+00:00",
+                    "request_id": "req-2",
+                    "event": "tool.success",
+                    "tool": "mars.simulate",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:02:00.000+00:00",
+                    "request_id": "req-3",
+                    "event": "tool.success",
+                    "tool": "mars.governance",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:03:00.000+00:00",
+                    "request_id": "req-4",
+                    "event": "tool.success",
+                    "tool": "mars.benchmark",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-full")
+
+    assert response.status_code == 200
+    assert response.text.count('dag-node-present') == 4
+    assert 'dag-node-missing' not in response.text
+    assert 'dag-node-orphaned' not in response.text
+
+
+def test_correlation_dag_missing_node_detected(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simulate absent but governance present → missing_node issue + dag-node-missing in HTML."""
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-02T10:00:00.000+00:00",
+                    "request_id": "req-1",
+                    "event": "tool.success",
+                    "tool": "mars.plan",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:02:00.000+00:00",
+                    "request_id": "req-3",
+                    "event": "tool.success",
+                    "tool": "mars.governance",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-gap")
+
+    assert response.status_code == 200
+    assert "missing_node" in response.text
+    assert "dag-node-missing" in response.text
+    assert "dag-node-orphaned" in response.text
+
+
+def test_correlation_dag_cycle_detection(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Governance recorded_at before simulate → cycle issue detected."""
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-02T10:00:00.000+00:00",
+                    "request_id": "req-1",
+                    "event": "tool.success",
+                    "tool": "mars.plan",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:02:00.000+00:00",
+                    "request_id": "req-2",
+                    "event": "tool.success",
+                    "tool": "mars.simulate",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+                {
+                    "recorded_at": "2026-04-02T10:01:00.000+00:00",
+                    "request_id": "req-3",
+                    "event": "tool.success",
+                    "tool": "mars.governance",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-cycle")
+
+    assert response.status_code == 200
+    assert "cycle" in response.text
+    assert "integrity-partial" in response.text
+

@@ -44,6 +44,21 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .mini-node-active { background: #d9ecd4; border-color: #7ca381; font-weight: 600; }
 .integrity-complete { background: #dff1dd; border-color: #9cc599; color: #204520; }
 .integrity-partial { background: #ffe7dc; border-color: #f2b596; color: #6e2f11; }
+/* DAG graph */
+.dag-graph { margin: 1rem 0 0.5rem 0; overflow: visible; }
+.dag-graph svg { width: 100%; max-width: 460px; display: block; }
+.dag-edge { stroke: #c9d5c2; stroke-width: 1.5; }
+.dag-node-present circle { fill: #dff1dd; stroke: #2f7f5f; stroke-width: 2; }
+.dag-node-present text { fill: #204520; font-weight: 600; }
+.dag-node-missing circle { fill: #f7fbf4; stroke: #c9d5c2; stroke-width: 2; stroke-dasharray: 4 3; }
+.dag-node-missing text { fill: #6a7869; }
+.dag-node-orphaned circle { fill: #ffe7dc; stroke: #b65a2a; stroke-width: 2; }
+.dag-node-orphaned text { fill: #6e2f11; font-weight: 600; }
+.dag-legend { display: flex; gap: 1rem; font-size: 0.78rem; margin-top: 0.25rem; }
+.dag-legend-item { padding: 0.1rem 0.45rem; border-radius: 4px; border: 1px solid transparent; }
+.dag-legend-present { background: #dff1dd; border-color: #9cc599; color: #204520; }
+.dag-legend-missing { background: #f7fbf4; border-color: #c9d5c2; color: #6a7869; }
+.dag-legend-orphaned { background: #ffe7dc; border-color: #f2b596; color: #6e2f11; }
 .outcome-success { background: #e3f3e1; border-color: #a8cc9f; color: #295629; }
 .outcome-failure { background: #ffe5db; border-color: #e7ab94; color: #7b2e0f; }
 .outcome-started { background: #e7efff; border-color: #b0c2f0; color: #22406d; }
