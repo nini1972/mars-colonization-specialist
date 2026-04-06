@@ -8,6 +8,7 @@
 }
 
 * { box-sizing: border-box; }
+[x-cloak] { display: none !important; }
 body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; color: var(--ink); background: radial-gradient(circle at top right, #dcebcf, var(--bg)); }
 .layout { max-width: 1100px; margin: 0 auto; padding: 1.25rem; }
 .header h1 { margin: 0; font-size: 1.8rem; }
@@ -34,6 +35,7 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .pagination { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; }
 .timeline { list-style: none; padding: 0; margin: 0; }
 .timeline li { border-left: 3px solid #d3e3cf; padding: 0.3rem 0 0.3rem 0.7rem; margin-left: 0.3rem; }
+.timeline-unknown { border-left-color: #b65a2a; }
 .spinner { color: #3e5f3e; font-size: 0.85rem; margin: 0.4rem 0; }
 .skeleton { color: #688168; font-style: italic; }
 .muted { color: #6a7869; }
@@ -59,6 +61,10 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .dag-legend-present { background: #dff1dd; border-color: #9cc599; color: #204520; }
 .dag-legend-missing { background: #f7fbf4; border-color: #c9d5c2; color: #6a7869; }
 .dag-legend-orphaned { background: #ffe7dc; border-color: #f2b596; color: #6e2f11; }
+.dag-graph g:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dag-tooltip { display: flex; flex-wrap: wrap; gap: 0.4rem 0.75rem; font-size: 0.82rem; background: #f7fbf4; border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.65rem; margin: 0.4rem 0 0.15rem 0; }
+.dag-tooltip strong { width: 100%; font-size: 0.88rem; }
+.dag-tooltip span { color: #526352; }
 .outcome-success { background: #e3f3e1; border-color: #a8cc9f; color: #295629; }
 .outcome-failure { background: #ffe5db; border-color: #e7ab94; color: #7b2e0f; }
 .outcome-started { background: #e7efff; border-color: #b0c2f0; color: #22406d; }
@@ -81,3 +87,4 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
 }
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .dag-graph { overflow-x: auto; } .dag-graph svg { min-width: 440px; width: 440px; } }

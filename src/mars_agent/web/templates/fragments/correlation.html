@@ -1,5 +1,6 @@
 {% set items = chain["items"] %}
 {% set nodes = chain["nodes"] %}
+{% set known_tools = ["mars.plan", "mars.simulate", "mars.governance", "mars.benchmark"] %}
 <div class="fragment" data-fragment="correlation" data-fragment-required="schema_version,correlation_id,items,integrity,nodes" data-fragment-allowed="schema_version,correlation_id,items,integrity,nodes">
   <header class="card-head">
     <h2>Correlation Chain</h2>
@@ -16,7 +17,7 @@
   <p class="muted">Integrity issues: {{ chain["integrity"]["issues"] | join(", ") }}</p>
   {% endif %}
 
-  <div class="dag-graph" x-data>
+  <div class="dag-graph" x-data="{tooltip: null}">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 90" aria-label="Correlation chain DAG" role="img">
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
@@ -31,13 +32,25 @@
       {% set cx = cx_values[loop.index0] %}
       <g class="dag-node-{{ node['status'] }}"
          role="img"
-         aria-label="{{ node['label'] }}: {{ node['status'] }}, {{ node['event_count'] }} event(s){% if node['latest_at'] %}, last at {{ node['latest_at'] }}{% endif %}">
+         tabindex="0"
+         aria-label="{{ node['label'] }}: {{ node['status'] }}, {{ node['event_count'] }} event(s){% if node['latest_at'] %}, last at {{ node['latest_at'] }}{% endif %}"
+         @mouseenter="tooltip = {label: {{ node['label'] | tojson }}, status: {{ node['status'] | tojson }}, count: {{ node['event_count'] }}, latest: {{ node['latest_at'] | tojson }}, outcome: {{ node['latest_outcome'] | tojson }}}"
+         @mouseleave="tooltip = null"
+         @focus="tooltip = {label: {{ node['label'] | tojson }}, status: {{ node['status'] | tojson }}, count: {{ node['event_count'] }}, latest: {{ node['latest_at'] | tojson }}, outcome: {{ node['latest_outcome'] | tojson }}}"
+         @blur="tooltip = null">
         <circle cx="{{ cx }}" cy="35" r="26"/>
         <text x="{{ cx }}" y="39" text-anchor="middle" font-size="9" font-family="inherit">{{ node["label"] }}</text>
         <title>{{ node["label"] }} · {{ node["status"] }} · {{ node["event_count"] }} event(s){% if node["latest_at"] %} · {{ node["latest_at"] }}{% endif %}</title>
       </g>
       {% endfor %}
     </svg>
+    <div class="dag-tooltip" x-show="tooltip" x-cloak>
+      <strong x-text="tooltip && tooltip.label"></strong>
+      <span x-text="tooltip && tooltip.status"></span>
+      <span x-text="(tooltip && tooltip.count) + ' event(s)'"></span>
+      <span x-show="tooltip && tooltip.latest" x-text="'Last: ' + (tooltip && tooltip.latest)"></span>
+      <span x-show="tooltip && tooltip.outcome" x-text="'Outcome: ' + (tooltip && tooltip.outcome)"></span>
+    </div>
     <div class="dag-legend">
       <span class="dag-legend-item dag-legend-present">present</span>
       <span class="dag-legend-item dag-legend-missing">missing</span>
@@ -46,9 +59,11 @@
   </div>
 
   {% if items %}
+  {% set ns = namespace(has_unknown=false) %}
   <ul class="timeline">
     {% for item in items %}
-    <li>
+    {% if item["tool"] not in known_tools %}{% set ns.has_unknown = true %}{% endif %}
+    <li{% if item["tool"] not in known_tools %} class="timeline-unknown"{% endif %}>
       <span>{{ item["recorded_at"] }}</span>
       <strong>{{ item["tool"] }}</strong>
       <span class="pill outcome-{{ item['outcome'] }}">{{ item["outcome"] }}</span>
@@ -56,6 +71,9 @@
     </li>
     {% endfor %}
   </ul>
+  {% if ns.has_unknown %}
+  <p class="muted">&#9670; Events from unrecognized tools are highlighted in amber.</p>
+  {% endif %}
   {% else %}
   <p class="muted">No events found for this correlation ID.</p>
   {% endif %}

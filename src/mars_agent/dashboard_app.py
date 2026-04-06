@@ -344,6 +344,7 @@ def _build_dag_nodes(
     nodes: list[dict[str, object]] = []
     for tool in _CORRELATION_SEQUENCE:
         tool_events = events_by_tool.get(tool, [])
+        last_event = tool_events[-1] if tool_events else {}
         if tool not in present:
             node_status = "missing"
         elif tool in ("mars.governance", "mars.benchmark") and "mars.simulate" not in present:
@@ -356,7 +357,8 @@ def _build_dag_nodes(
                 "label": _CORRELATION_LABELS[tool],
                 "status": node_status,
                 "event_count": len(tool_events),
-                "latest_at": tool_events[-1].get("recorded_at") if tool_events else None,
+                "latest_at": last_event.get("recorded_at"),
+                "latest_outcome": last_event.get("outcome"),
             }
         )
     return nodes

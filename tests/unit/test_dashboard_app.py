@@ -617,3 +617,57 @@ def test_correlation_dag_cycle_detection(
     assert "cycle" in response.text
     assert "integrity-partial" in response.text
 
+
+def test_build_dag_nodes_includes_latest_outcome() -> None:
+    """_build_dag_nodes returns latest_outcome from the last event for that tool."""
+    from mars_agent.dashboard_app import _build_dag_nodes
+
+    ordered: list[dict[str, object]] = [
+        {
+            "recorded_at": "2026-04-07T10:00:00.000+00:00",
+            "tool": "mars.plan",
+            "outcome": "failure",
+        },
+        {
+            "recorded_at": "2026-04-07T10:01:00.000+00:00",
+            "tool": "mars.plan",
+            "outcome": "success",
+        },
+    ]
+    nodes = _build_dag_nodes({"mars.plan"}, ordered)
+    plan_node = next(n for n in nodes if n["tool"] == "mars.plan")
+    assert plan_node["latest_outcome"] == "success"
+    simulate_node = next(n for n in nodes if n["tool"] == "mars.simulate")
+    assert simulate_node["latest_outcome"] is None
+
+
+def test_correlation_fragment_unknown_tool_gets_timeline_class(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timeline items with unrecognized tools receive the timeline-unknown CSS class."""
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_correlation_chain",
+        lambda correlation_id: {
+            "schema_version": "1.0",
+            "correlation_id": correlation_id,
+            "items": [
+                {
+                    "recorded_at": "2026-04-07T10:00:00.000+00:00",
+                    "request_id": "req-u1",
+                    "event": "tool.success",
+                    "tool": "mars.custom",
+                    "outcome": "success",
+                    "error_code": None,
+                },
+            ],
+        },
+    )
+
+    response = client.get("/dashboard/fragments/correlation?correlation_id=corr-unknown")
+
+    assert response.status_code == 200
+    assert "timeline-unknown" in response.text
+    assert "unrecognized tools" in response.text
+
