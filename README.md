@@ -8,6 +8,16 @@ Phases 0-7 baseline for deterministic, testable implementation.
 ./scripts/setup.ps1
 ./scripts/check.ps1
 ```
+## Start dashboard
+
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+
+If you want to use a different port:
+
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload --port 8080
+
+navigate to:
+http://localhost:8000/dashboard
 
 ## Progress
 

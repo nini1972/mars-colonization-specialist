@@ -43,6 +43,7 @@ src/mars_agent/simulation/validation.py
 src/mars_agent/specialists/__init__.py
 src/mars_agent/specialists/contracts.py
 src/mars_agent/specialists/eclss.py
+src/mars_agent/specialists/habitat_thermodynamics.py
 src/mars_agent/specialists/isru.py
 src/mars_agent/specialists/power.py
 src/mars_agent/web/__init__.py

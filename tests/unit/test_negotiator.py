@@ -64,7 +64,7 @@ def test_negotiate_disabled_returns_fallback() -> None:
     negotiator.api_key = ""
     negotiator.client = None
 
-    accepted, reduction, rationale = negotiator.negotiate(
+    accepted, reduction, crew_reduction, dust_adj, rationale = negotiator.negotiate(
         goal=_goal(),
         conflicts=(_conflict(),),
         current_reduction=0.3,
@@ -72,6 +72,8 @@ def test_negotiate_disabled_returns_fallback() -> None:
 
     assert accepted is False
     assert reduction == 0.3
+    assert crew_reduction == 0
+    assert dust_adj == 0.0
     assert rationale == "Negotiator disabled."
 
 
@@ -90,6 +92,75 @@ def test_negotiate_empty_history_omits_prior_rounds_section() -> None:
     call_kwargs = mock_client.chat.completions.create.call_args
     user_message = call_kwargs.kwargs["messages"][1]["content"]
     assert "Prior negotiation rounds" not in user_message
+
+
+def test_negotiate_crew_reduction_propagated() -> None:
+    """crew_reduction returned by the LLM is propagated through the 5-tuple."""
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.3,
+        "crew_reduction": 2,
+        "dust_degradation_adjustment": 0.0,
+        "rationale": "Stand down two crew members.",
+    }
+    negotiator, _ = _negotiator_with_mock_client(payload)
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.1,
+    )
+
+    assert accepted is True
+    assert isru == 0.3
+    assert crew == 2
+    assert dust == 0.0
+    assert rationale == "Stand down two crew members."
+
+
+def test_negotiate_dust_adjustment_propagated() -> None:
+    """dust_degradation_adjustment returned by the LLM is propagated through the 5-tuple."""
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.2,
+        "crew_reduction": 0,
+        "dust_degradation_adjustment": 0.05,
+        "rationale": "Schedule panel cleaning.",
+    }
+    negotiator, _ = _negotiator_with_mock_client(payload)
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.1,
+    )
+
+    assert accepted is True
+    assert isru == 0.2
+    assert crew == 0
+    assert dust == 0.05
+    assert rationale == "Schedule panel cleaning."
+
+
+def test_negotiate_extra_fields_default_to_zero() -> None:
+    """When LLM omits the new fields, Pydantic defaults to 0 / 0.0."""
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.4,
+        "rationale": "Reduce feedstock only.",
+    }
+    negotiator, _ = _negotiator_with_mock_client(payload)
+
+    accepted, isru, crew, dust, _ = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+    )
+
+    assert accepted is True
+    assert isru == 0.4
+    assert crew == 0
+    assert dust == 0.0
 
 
 def test_negotiate_includes_history_in_user_message() -> None:

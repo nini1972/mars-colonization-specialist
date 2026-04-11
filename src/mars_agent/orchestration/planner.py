@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 from mars_agent.orchestration.coupling import CouplingChecker
@@ -304,9 +305,9 @@ class CentralPlanner:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         history: tuple[NegotiationRound, ...] = (),
-    ) -> tuple[float, str, NegotiationRound]:
-        """Negotiate or fall back; return (new_reduction, rationale, round)."""
-        accepted, new_reduction, rationale = self.negotiator.negotiate(
+    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
+        """Negotiate or fall back; return (new_reduction, updated_goal, rationale, round)."""
+        accepted, new_reduction, crew_reduction, dust_adj, rationale = self.negotiator.negotiate(
             goal=goal,
             conflicts=conflicts,
             current_reduction=current_reduction,
@@ -320,14 +321,23 @@ class CentralPlanner:
                 "Detected cross-domain conflicts; "
                 "reducing ISRU feedstock demand (deterministic fallback)."
             )
+            crew_reduction = 0
+            dust_adj = 0.0
         final_reduction = max(current_reduction, new_reduction)
+        updated_goal = dataclasses.replace(
+            goal,
+            crew_size=max(1, goal.crew_size - crew_reduction),
+            dust_degradation_fraction=max(0.0, goal.dust_degradation_fraction - dust_adj),
+        )
         neg_round = NegotiationRound(
             round_num=len(history),
             reduction_fraction=final_reduction,
             accepted=accepted,
             rationale=rationale,
+            crew_reduction=crew_reduction,
+            dust_degradation_adjustment=dust_adj,
         )
-        return final_reduction, rationale, neg_round
+        return final_reduction, updated_goal, rationale, neg_round
 
     def _readiness(
         self,
@@ -382,7 +392,7 @@ class CentralPlanner:
                 break
 
             if attempt < self.settings.max_replan_attempts:
-                current_reduction, rationale, neg_round = self._handle_replan(
+                current_reduction, goal, rationale, neg_round = self._handle_replan(
                     goal, conflicts, current_reduction, history=tuple(negotiation_history)
                 )
                 negotiation_history.append(neg_round)

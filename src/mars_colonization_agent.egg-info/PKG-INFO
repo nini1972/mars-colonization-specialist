@@ -44,10 +44,18 @@ Phases 0-7 baseline for deterministic, testable implementation.
   - Parity contract tests ✅ — Full 4-tool stdio pipeline parity verified against adapter output.
   - Workstream 3 ✅ — Structured stderr logs, correlation propagation, progress notifications, and in-process metrics.
   - Workstream 4 ✅ — Transport-edge semantic validation, timeout-bounded execution (`MARS_MCP_TOOL_TIMEOUT_SECONDS`), and request-id idempotent replay/conflict protection.
+- Phase 9A ✅ — MCP runtime persistence (memory + SQLite backends), idempotency eviction, metrics persistence, schema version guard.
+- Phase 9B ✅ — Operator dashboard (FastAPI + Jinja2 + HTMX + Alpine.js): overview, invocation list, invocation detail, correlation chain, replay panel.
+  - Option A ✅ — Advanced Telemetry DAG UI: animated SVG correlation DAG, per-node status coloring (`present | missing | orphaned`), gap/cycle detection, Alpine.js tooltips, responsive CSS, keyboard navigation.
+  - Option B ✅ — Habitat Thermodynamics Specialist: `HabitatThermodynamicsSpecialist` models thermal power demand and habitat temperature; coupled into `CouplingChecker` as a fourth power load; planner wired with phase-dependent thermal requests.
+- Phase 10a ✅ — LLM-driven multi-agent negotiation (`MultiAgentNegotiator`): Chief Engineer persona negotiates ISRU feedstock reductions via OpenAI Chat Completions; fully opt-in via `MARS_LLM_ORCHESTRATOR_ENABLED` + `OPENAI_API_KEY`; deterministic fallback on any failure path.
+- Phase 10b ✅ — Multi-turn negotiation history: `NegotiationRound` dataclass accumulates accepted/rejected rounds; each iteration passes prior rounds to the LLM for context; `_build_messages()` injects a structured history section; mock-client unit tests added (101 tests passing).
 
 ## Next
 
-- See `docs/phase8-transport-auth-observability-scope.md`.
+- Phase 10b remaining options: expand negotiation variables beyond ISRU feedstock; add `AsyncOpenAI` support.
+- Phase 10c/10d: Option D — cloud infrastructure (Dockerfile, health endpoints, deployment scripts).
+- See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
 ## MCP Error Payload Contract
 
@@ -137,3 +145,34 @@ The MCP server now emits structured observability signals while preserving the e
   - `/dashboard/fragments/invocation-detail`
   - `/dashboard/fragments/correlation`
   - `/dashboard/fragments/replay`
+
+## Correlation DAG UI (Option A)
+
+- Correlation fragment renders an inline SVG DAG with four nodes: `plan → simulate → governance → benchmark`.
+- Node status: `present` (green), `missing` (amber dashed), `orphaned` (red).
+- Gap detection: mid-chain missing node fires `missing_node` issue type.
+- Cycle detection: backwards timestamp within a committed sequence fires `cycle_detected`.
+- Per-node tooltips via Alpine.js showing event count and latest `recorded_at`.
+- Keyboard navigation: nodes are focusable; tooltip opens on focus as well as hover.
+- Responsive layout: SVG scales fluidly on narrow viewports.
+
+## LLM Multi-Agent Negotiation (Phase 10)
+
+### Phase 10a — Increment 1
+
+- `MultiAgentNegotiator` class in `src/mars_agent/orchestration/negotiator.py`.
+- Persona: Chief Engineer Orchestrator negotiates ISRU feedstock reductions via OpenAI Chat Completions.
+- Response schema: `NegotiationResult` Pydantic model — `accepted`, `isru_reduction_fraction` (0.0–0.8), `rationale`.
+- Fully opt-in: `MARS_LLM_ORCHESTRATOR_ENABLED=true` + `OPENAI_API_KEY` required; inert by default.
+- Deterministic fallback (step-based reduction) on any failure path.
+- `json_object` response format for reliable LLM output parsing.
+
+### Phase 10b — Multi-turn history
+
+- `NegotiationRound` frozen dataclass: `round_num`, `reduction_fraction`, `accepted`, `rationale`.
+- Each call to `negotiate()` accepts `history: tuple[NegotiationRound, ...]`; prior rounds are injected into the LLM user message as a structured "Prior negotiation rounds" section.
+- `CentralPlanner.plan()` accumulates `negotiation_history` and passes it forward each replan iteration.
+- Unit tests exercise the LLM path via `MultiAgentNegotiator.__new__` + mock OpenAI client injection (no live API key required).
+
+
+

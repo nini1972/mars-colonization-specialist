@@ -28,6 +28,8 @@ class NegotiationRound:
     reduction_fraction: float
     accepted: bool
     rationale: str
+    crew_reduction: int = 0
+    dust_degradation_adjustment: float = 0.0
 
 
 class NegotiationResult(BaseModel):
@@ -41,6 +43,18 @@ class NegotiationResult(BaseModel):
         description="The negotiated ISRU feedstock reduction fraction (0.0 to 0.8)",
         ge=0.0,
         le=0.8,
+    )
+    crew_reduction: int = Field(
+        default=0,
+        description="Number of crew members to stand down from active duty (0–5).",
+        ge=0,
+        le=5,
+    )
+    dust_degradation_adjustment: float = Field(
+        default=0.0,
+        description="Reduction to apply to the dust degradation fraction (0.0–0.1).",
+        ge=0.0,
+        le=0.1,
     )
     rationale: str = Field(..., description="The rationale for the negotiated changes.")
 
@@ -77,11 +91,17 @@ class MultiAgentNegotiator:
             "Mars Colonization Specialist mission planner.\n"
             "Your job is to negotiate inputs between ECLSS, ISRU, and Power "
             "specialists to resolve conflicts.\n"
-            "The only knob you have right now to resolve Power deficits is "
-            "reducing the ISRU generic regolith feedstock.\n"
+            "You have three knobs to resolve Power deficits:\n"
+            "  1. isru_reduction_fraction: float 0.0–0.8; reduces ISRU feedstock.\n"
+            "  2. crew_reduction: integer 0–5; reduces ECLSS power demand.\n"
+            "  3. dust_degradation_adjustment: float 0.0–0.1; improves solar generation.\n"
             "Return a JSON object conforming strictly to this format:\n"
-            '{"accepted": bool, "isru_reduction_fraction": float, "rationale": "string"}\n'
-            "isru_reduction_fraction must be between 0.0 and 0.8."
+            '{"accepted": bool, "isru_reduction_fraction": float, '
+            '"crew_reduction": int, "dust_degradation_adjustment": float, '
+            '"rationale": "string"}\n'
+            "isru_reduction_fraction must be 0.0–0.8. "
+            "crew_reduction must be 0–5. "
+            "dust_degradation_adjustment must be 0.0–0.1."
         )
 
         history_section = ""
@@ -89,9 +109,15 @@ class MultiAgentNegotiator:
             lines = ["\n\nPrior negotiation rounds:"]
             for r in history:
                 status = "accepted" if r.accepted else "rejected"
+                extras = []
+                if r.crew_reduction:
+                    extras.append(f"crew_reduction={r.crew_reduction}")
+                if r.dust_degradation_adjustment:
+                    extras.append(f"dust_adj={r.dust_degradation_adjustment:.3f}")
+                extra_str = f" [{', '.join(extras)}]" if extras else ""
                 lines.append(
                     f"  Round {r.round_num + 1}: {r.reduction_fraction * 100:.1f}%"
-                    f" reduction \u2192 {status}. {r.rationale}"
+                    f" reduction{extra_str} \u2192 {status}. {r.rationale}"
                 )
             history_section = "\n".join(lines)
 
@@ -116,14 +142,14 @@ class MultiAgentNegotiator:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         history: tuple[NegotiationRound, ...] = (),
-    ) -> tuple[bool, float, str]:
+    ) -> tuple[bool, float, int, float, str]:
         """
         Executes a multi-agent negotiation loop to resolve specific conflicts.
-        Returns a tuple of (success, new_reduction_fraction, rationale).
+        Returns (accepted, isru_reduction, crew_reduction, dust_adjustment, rationale).
         """
         if not self.is_enabled or not self.client:
             logger.debug("MultiAgentNegotiator is disabled or missing credentials. Skipping.")
-            return False, current_reduction, "Negotiator disabled."
+            return False, current_reduction, 0, 0.0, "Negotiator disabled."
 
         logger.info("Triggering LLM multi-agent negotiation for %d conflicts.", len(conflicts))
 
@@ -137,13 +163,19 @@ class MultiAgentNegotiator:
 
             raw_json = response.choices[0].message.content
             if not raw_json:
-                return False, current_reduction, "Empty response from LLM."
+                return False, current_reduction, 0, 0.0, "Empty response from LLM."
 
             result_dict = json.loads(raw_json)
             result = NegotiationResult(**result_dict)
 
-            return result.accepted, result.isru_reduction_fraction, result.rationale
+            return (
+                result.accepted,
+                result.isru_reduction_fraction,
+                result.crew_reduction,
+                result.dust_degradation_adjustment,
+                result.rationale,
+            )
 
         except Exception:
             logger.error("LLM negotiation failed.", exc_info=True)
-            return False, current_reduction, "Negotiator error; see logs."
+            return False, current_reduction, 0, 0.0, "Negotiator error; see logs."
