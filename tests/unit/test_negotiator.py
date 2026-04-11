@@ -55,7 +55,8 @@ def _negotiator_with_mock_client(response_payload: dict[str, Any]) -> tuple[Mult
 
 
 def test_negotiate_disabled_returns_fallback() -> None:
-    """When the negotiator is disabled it returns (False, unchanged_reduction, 'Negotiator disabled.')."""
+    """When the negotiator is disabled it returns
+    (False, unchanged_reduction, 'Negotiator disabled.')."""
     negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
     negotiator.is_enabled = False
     negotiator.api_key = ""

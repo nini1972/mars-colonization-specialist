@@ -11,7 +11,6 @@ from mars_agent.orchestration.models import (
 )
 from mars_agent.specialists.contracts import ModuleResponse, Subsystem
 
-
 # ---------------------------------------------------------------------------
 # Conflict builder helpers (extracted to keep evaluate() ≤ 50 NLOC)
 # ---------------------------------------------------------------------------
