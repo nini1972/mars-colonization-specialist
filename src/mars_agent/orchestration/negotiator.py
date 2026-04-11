@@ -9,9 +9,11 @@ from pydantic import BaseModel, Field
 
 try:
     from openai import OpenAI
+    from openai.types.chat import ChatCompletionMessageParam
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
+    ChatCompletionMessageParam = object  # type: ignore[misc]
 
 from mars_agent.orchestration.models import CrossDomainConflict, MissionGoal
 
@@ -62,7 +64,7 @@ class MultiAgentNegotiator:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         history: tuple[NegotiationRound, ...],
-    ) -> list[dict[str, str]]:
+    ) -> list[ChatCompletionMessageParam]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
             f"- {c.severity.name}: {' vs '.join(s.name for s in c.impacted_subsystems)} "
