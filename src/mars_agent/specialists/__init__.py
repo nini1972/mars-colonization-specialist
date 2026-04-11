@@ -9,11 +9,13 @@ from mars_agent.specialists.contracts import (
     UncertaintyBounds,
 )
 from mars_agent.specialists.eclss import ECLSSSpecialist
+from mars_agent.specialists.habitat_thermodynamics import HabitatThermodynamicsSpecialist
 from mars_agent.specialists.isru import ISRUSpecialist
 from mars_agent.specialists.power import PowerSpecialist
 
 __all__ = [
     "ECLSSSpecialist",
+    "HabitatThermodynamicsSpecialist",
     "ISRUSpecialist",
     "ModuleInput",
     "ModuleMetric",

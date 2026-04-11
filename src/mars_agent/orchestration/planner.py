@@ -14,11 +14,12 @@ from mars_agent.orchestration.models import (
     ReadinessSignals,
     ReplanEvent,
 )
-from mars_agent.orchestration.negotiator import MultiAgentNegotiator
+from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
 from mars_agent.orchestration.state_machine import MissionPhaseStateMachine
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import (
     ECLSSSpecialist,
+    HabitatThermodynamicsSpecialist,
     ISRUSpecialist,
     ModuleInput,
     ModuleRequest,
@@ -42,6 +43,57 @@ def _replace_input(request: ModuleRequest, name: str, updated: UncertaintyBounds
     )
 
 
+def _power_inputs(goal: MissionGoal, critical_load_kw: float) -> tuple[ModuleInput, ...]:
+    """Build the five ModuleInput entries for the power specialist request."""
+    return (
+        ModuleInput(
+            "solar_generation_kw",
+            UncertaintyBounds(
+                goal.solar_generation_kw,
+                goal.solar_generation_kw * 0.85,
+                goal.solar_generation_kw * 1.15,
+                "kW",
+            ),
+        ),
+        ModuleInput(
+            "battery_capacity_kwh",
+            UncertaintyBounds(
+                goal.battery_capacity_kwh,
+                goal.battery_capacity_kwh * 0.9,
+                goal.battery_capacity_kwh * 1.1,
+                "kWh",
+            ),
+        ),
+        ModuleInput(
+            "critical_load_kw",
+            UncertaintyBounds(
+                critical_load_kw,
+                critical_load_kw * 0.95,
+                critical_load_kw * 1.05,
+                "kW",
+            ),
+        ),
+        ModuleInput(
+            "dust_degradation_fraction",
+            UncertaintyBounds(
+                goal.dust_degradation_fraction,
+                max(0.0, goal.dust_degradation_fraction * 0.8),
+                min(0.95, goal.dust_degradation_fraction * 1.2),
+                "ratio",
+            ),
+        ),
+        ModuleInput(
+            "hours_without_sun",
+            UncertaintyBounds(
+                goal.hours_without_sun,
+                goal.hours_without_sun * 0.9,
+                goal.hours_without_sun * 1.1,
+                "h",
+            ),
+        ),
+    )
+
+
 @dataclass(slots=True)
 class CentralPlanner:
     """Orchestrates subsystem analysis and resolves cross-domain couplings."""
@@ -49,6 +101,9 @@ class CentralPlanner:
     eclss: ECLSSSpecialist = field(default_factory=ECLSSSpecialist)
     isru: ISRUSpecialist = field(default_factory=ISRUSpecialist)
     power: PowerSpecialist = field(default_factory=PowerSpecialist)
+    thermal: HabitatThermodynamicsSpecialist = field(
+        default_factory=HabitatThermodynamicsSpecialist
+    )
     coupling_checker: CouplingChecker = field(default_factory=CouplingChecker)
     state_machine: MissionPhaseStateMachine = field(default_factory=MissionPhaseStateMachine)
     settings: PlannerSettings = field(default_factory=PlannerSettings)
@@ -161,51 +216,49 @@ class CentralPlanner:
             subsystem=Subsystem.POWER,
             evidence=evidence,
             desired_confidence=goal.desired_confidence,
+            inputs=_power_inputs(goal, critical_load_kw),
+        )
+
+    def _thermal_request(
+        self,
+        goal: MissionGoal,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> ModuleRequest:
+        base_solar_flux = {
+            MissionPhase.TRANSIT: 300.0,
+            MissionPhase.LANDING: 590.0,
+            MissionPhase.EARLY_OPERATIONS: 590.0,
+            MissionPhase.SCALING: 590.0,
+        }[goal.current_phase]
+        solar_flux = base_solar_flux * (1.0 - goal.dust_degradation_fraction)
+        habitat_area = 50.0 * goal.crew_size
+        thermal_budget_kw = goal.solar_generation_kw * 0.2
+
+        return ModuleRequest(
+            mission=goal.mission_id,
+            subsystem=Subsystem.HABITAT_THERMODYNAMICS,
+            evidence=evidence,
+            desired_confidence=goal.desired_confidence,
             inputs=(
                 ModuleInput(
-                    "solar_generation_kw",
-                    UncertaintyBounds(
-                        goal.solar_generation_kw,
-                        goal.solar_generation_kw * 0.85,
-                        goal.solar_generation_kw * 1.15,
-                        "kW",
-                    ),
+                    "crew_count",
+                    UncertaintyBounds(float(goal.crew_size), float(goal.crew_size), float(goal.crew_size), "crew"),
                 ),
                 ModuleInput(
-                    "battery_capacity_kwh",
-                    UncertaintyBounds(
-                        goal.battery_capacity_kwh,
-                        goal.battery_capacity_kwh * 0.9,
-                        goal.battery_capacity_kwh * 1.1,
-                        "kWh",
-                    ),
+                    "solar_flux_w_m2",
+                    UncertaintyBounds(solar_flux, solar_flux * 0.85, solar_flux * 1.15, "W/m²"),
                 ),
                 ModuleInput(
-                    "critical_load_kw",
-                    UncertaintyBounds(
-                        critical_load_kw,
-                        critical_load_kw * 0.95,
-                        critical_load_kw * 1.05,
-                        "kW",
-                    ),
+                    "habitat_area_m2",
+                    UncertaintyBounds(habitat_area, habitat_area * 0.95, habitat_area * 1.05, "m²"),
                 ),
                 ModuleInput(
-                    "dust_degradation_fraction",
-                    UncertaintyBounds(
-                        goal.dust_degradation_fraction,
-                        max(0.0, goal.dust_degradation_fraction * 0.8),
-                        min(0.95, goal.dust_degradation_fraction * 1.2),
-                        "ratio",
-                    ),
+                    "insulation_r_value",
+                    UncertaintyBounds(3.5, 3.0, 4.0, "m²·K/W"),
                 ),
                 ModuleInput(
-                    "hours_without_sun",
-                    UncertaintyBounds(
-                        goal.hours_without_sun,
-                        goal.hours_without_sun * 0.9,
-                        goal.hours_without_sun * 1.1,
-                        "h",
-                    ),
+                    "thermal_power_budget_kw",
+                    UncertaintyBounds(thermal_budget_kw, thermal_budget_kw * 0.9, thermal_budget_kw * 1.1, "kW"),
                 ),
             ),
         )
@@ -215,7 +268,7 @@ class CentralPlanner:
         goal: MissionGoal,
         evidence: tuple[EvidenceReference, ...],
         isru_reduction: float,
-    ) -> tuple[ModuleResponse, ModuleResponse, ModuleResponse]:
+    ) -> tuple[ModuleResponse, ModuleResponse, ModuleResponse, ModuleResponse]:
         eclss_request = self._eclss_request(goal, evidence)
         isru_request = self._isru_request(goal, evidence, reduction=isru_reduction)
 
@@ -229,7 +282,42 @@ class CentralPlanner:
 
         power_request = self._power_request(goal, evidence, critical_load_kw)
         power_response = self.power.analyze(power_request)
-        return eclss_response, isru_response, power_response
+
+        thermal_request = self._thermal_request(goal, evidence)
+        thermal_response = self.thermal.analyze(thermal_request)
+
+        return eclss_response, isru_response, power_response, thermal_response
+
+    def _handle_replan(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[float, str, NegotiationRound]:
+        """Negotiate or fall back; return (new_reduction, rationale, round)."""
+        accepted, new_reduction, rationale = self.negotiator.negotiate(
+            goal=goal,
+            conflicts=conflicts,
+            current_reduction=current_reduction,
+            history=history,
+        )
+        if not accepted:
+            new_reduction = min(
+                0.8, current_reduction + self.settings.replan_feedstock_reduction
+            )
+            rationale = (
+                "Detected cross-domain conflicts; "
+                "reducing ISRU feedstock demand (deterministic fallback)."
+            )
+        final_reduction = max(current_reduction, new_reduction)
+        neg_round = NegotiationRound(
+            round_num=len(history),
+            reduction_fraction=final_reduction,
+            accepted=accepted,
+            rationale=rationale,
+        )
+        return final_reduction, rationale, neg_round
 
     def _readiness(
         self,
@@ -259,15 +347,17 @@ class CentralPlanner:
 
     def plan(self, goal: MissionGoal, evidence: tuple[EvidenceReference, ...]) -> PlanResult:
         replan_events: list[ReplanEvent] = []
+        negotiation_history: list[NegotiationRound] = []
         current_reduction = 0.0
 
         eclss_response: ModuleResponse
         isru_response: ModuleResponse
         power_response: ModuleResponse
+        thermal_response: ModuleResponse
 
         conflicts: tuple[CrossDomainConflict, ...] = ()
         for attempt in range(self.settings.max_replan_attempts + 1):
-            eclss_response, isru_response, power_response = self._run_modules(
+            eclss_response, isru_response, power_response, thermal_response = self._run_modules(
                 goal,
                 evidence,
                 isru_reduction=current_reduction,
@@ -276,37 +366,17 @@ class CentralPlanner:
                 eclss=eclss_response,
                 isru=isru_response,
                 power=power_response,
+                thermal=thermal_response,
             )
             if not conflicts:
                 break
 
             if attempt < self.settings.max_replan_attempts:
-                # Ask orchestrator agent to negotiate a new reduction
-                accepted, new_reduction, rationale = self.negotiator.negotiate(
-                    goal=goal,
-                    conflicts=conflicts,
-                    current_reduction=current_reduction,
+                current_reduction, rationale, neg_round = self._handle_replan(
+                    goal, conflicts, current_reduction, history=tuple(negotiation_history)
                 )
-
-                # If the agent isn't enabled or failed, fall back to deterministic strategy
-                if not accepted:
-                    new_reduction = min(
-                        0.8,
-                        current_reduction + self.settings.replan_feedstock_reduction,
-                    )
-                    rationale = (
-                        "Detected cross-domain conflicts; "
-                        "reducing ISRU feedstock demand (deterministic fallback)."
-                    )
-
-                current_reduction = max(current_reduction, new_reduction)
-
-                replan_events.append(
-                    ReplanEvent(
-                        attempt=attempt + 1,
-                        reason=rationale,
-                    )
-                )
+                negotiation_history.append(neg_round)
+                replan_events.append(ReplanEvent(attempt=attempt + 1, reason=rationale))
 
         readiness = self._readiness(eclss_response, isru_response, power_response)
         next_phase = self.state_machine.next_phase(goal.current_phase, readiness)
@@ -315,7 +385,7 @@ class CentralPlanner:
             mission_id=goal.mission_id,
             started_phase=goal.current_phase,
             next_phase=next_phase,
-            subsystem_responses=(eclss_response, isru_response, power_response),
+            subsystem_responses=(eclss_response, isru_response, power_response, thermal_response),
             conflicts=conflicts,
             replan_events=tuple(replan_events),
         )

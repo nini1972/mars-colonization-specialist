@@ -14,6 +14,7 @@ class Subsystem(StrEnum):
     ECLSS = "eclss"
     ISRU = "isru"
     POWER = "power"
+    HABITAT_THERMODYNAMICS = "habitat_thermodynamics"
 
 
 @dataclass(frozen=True, slots=True)

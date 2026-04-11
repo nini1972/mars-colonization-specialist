@@ -25,10 +25,18 @@ Phases 0-7 baseline for deterministic, testable implementation.
   - Parity contract tests ✅ — Full 4-tool stdio pipeline parity verified against adapter output.
   - Workstream 3 ✅ — Structured stderr logs, correlation propagation, progress notifications, and in-process metrics.
   - Workstream 4 ✅ — Transport-edge semantic validation, timeout-bounded execution (`MARS_MCP_TOOL_TIMEOUT_SECONDS`), and request-id idempotent replay/conflict protection.
+- Phase 9A ✅ — MCP runtime persistence (memory + SQLite backends), idempotency eviction, metrics persistence, schema version guard.
+- Phase 9B ✅ — Operator dashboard (FastAPI + Jinja2 + HTMX + Alpine.js): overview, invocation list, invocation detail, correlation chain, replay panel.
+  - Option A ✅ — Advanced Telemetry DAG UI: animated SVG correlation DAG, per-node status coloring (`present | missing | orphaned`), gap/cycle detection, Alpine.js tooltips, responsive CSS, keyboard navigation.
+  - Option B ✅ — Habitat Thermodynamics Specialist: `HabitatThermodynamicsSpecialist` models thermal power demand and habitat temperature; coupled into `CouplingChecker` as a fourth power load; planner wired with phase-dependent thermal requests.
+- Phase 10a ✅ — LLM-driven multi-agent negotiation (`MultiAgentNegotiator`): Chief Engineer persona negotiates ISRU feedstock reductions via OpenAI Chat Completions; fully opt-in via `MARS_LLM_ORCHESTRATOR_ENABLED` + `OPENAI_API_KEY`; deterministic fallback on any failure path.
+- Phase 10b ✅ — Multi-turn negotiation history: `NegotiationRound` dataclass accumulates accepted/rejected rounds; each iteration passes prior rounds to the LLM for context; `_build_messages()` injects a structured history section; mock-client unit tests added (101 tests passing).
 
 ## Next
 
-- See `docs/phase8-transport-auth-observability-scope.md`.
+- Phase 10b remaining options: expand negotiation variables beyond ISRU feedstock; add `AsyncOpenAI` support.
+- Phase 10c/10d: Option D — cloud infrastructure (Dockerfile, health endpoints, deployment scripts).
+- See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
 ## MCP Error Payload Contract
 
@@ -119,99 +127,33 @@ The MCP server now emits structured observability signals while preserving the e
   - `/dashboard/fragments/correlation`
   - `/dashboard/fragments/replay`
 
+## Correlation DAG UI (Option A)
+
+- Correlation fragment renders an inline SVG DAG with four nodes: `plan → simulate → governance → benchmark`.
+- Node status: `present` (green), `missing` (amber dashed), `orphaned` (red).
+- Gap detection: mid-chain missing node fires `missing_node` issue type.
+- Cycle detection: backwards timestamp within a committed sequence fires `cycle_detected`.
+- Per-node tooltips via Alpine.js showing event count and latest `recorded_at`.
+- Keyboard navigation: nodes are focusable; tooltip opens on focus as well as hover.
+- Responsive layout: SVG scales fluidly on narrow viewports.
+
+## LLM Multi-Agent Negotiation (Phase 10)
+
+### Phase 10a — Increment 1
+
+- `MultiAgentNegotiator` class in `src/mars_agent/orchestration/negotiator.py`.
+- Persona: Chief Engineer Orchestrator negotiates ISRU feedstock reductions via OpenAI Chat Completions.
+- Response schema: `NegotiationResult` Pydantic model — `accepted`, `isru_reduction_fraction` (0.0–0.8), `rationale`.
+- Fully opt-in: `MARS_LLM_ORCHESTRATOR_ENABLED=true` + `OPENAI_API_KEY` required; inert by default.
+- Deterministic fallback (step-based reduction) on any failure path.
+- `json_object` response format for reliable LLM output parsing.
+
+### Phase 10b — Multi-turn history
+
+- `NegotiationRound` frozen dataclass: `round_num`, `reduction_fraction`, `accepted`, `rationale`.
+- Each call to `negotiate()` accepts `history: tuple[NegotiationRound, ...]`; prior rounds are injected into the LLM user message as a structured "Prior negotiation rounds" section.
+- `CentralPlanner.plan()` accumulates `negotiation_history` and passes it forward each replan iteration.
+- Unit tests exercise the LLM path via `MultiAgentNegotiator.__new__` + mock OpenAI client injection (no live API key required).
 
 
-Here are the two plans in detail:
-
----
-
-## Plan: Option A — Advanced Telemetry UI (DAG View)
-
-The correlation chain already enforces plan→simulate→governance→benchmark sequences with 5 integrity checks in `_correlation_view_model()`. The current `correlation.html` renders a flat timeline list. This plan upgrades it to an animated SVG DAG with per-node status coloring, gap/cycle detection, and tooltips — no new JS libraries needed.
-
-**Steps**
-
-**Phase 1 — Backend enrichment** *(blocks Phase 2)*
-1. Extend `_correlation_view_model()` in dashboard_app.py (~line 269) to add a `nodes` list — one entry per step with status `present | missing | orphaned`
-2. Add `missing_node` issue type for mid-chain gaps (currently only `orphaned_child` fires; a governance event with no simulate ancestor isn't distinguished from a gap at position 2)
-3. Add explicit cycle detection (backwards timestamp within a committed sequence)
-
-**Phase 2 — Frontend DAG template** *(depends on Phase 1)*
-4. Replace `<ul class="timeline">` in correlation.html with an inline SVG DAG: 4 circular nodes + `→` edge arrows, colored by status
-5. Per-node tooltips via Alpine.js `x-data` showing event count + latest `recorded_at`
-6. Add `.dag-node-present`, `.dag-node-missing`, `.dag-node-orphaned`, `.dag-edge` to dashboard.css
-
-**Phase 3 — Tests** *(parallel with Phase 2)*
-7. Add 3 test cases to test_dashboard_app.py: missing-node, orphaned-node, cycle — asserting `nodes` shape and `issues` list
-
-**Relevant files**
-- dashboard_app.py — `_correlation_view_model()`, `correlation_fragment()`
-- correlation.html — replace timeline with SVG DAG
-- dashboard.css — new DAG classes
-- test_dashboard_app.py — 3 new tests
-
-**Verification**
-1. `python -m pytest test_dashboard_app.py -v` — all existing + 3 new tests pass
-2. `ruff + mypy + pytest` full suite green
-3. Manual: open `/dashboard` → correlation fragment → SVG renders with node colors
-
-**Decisions**
-- No new JS libraries; SVG + existing Alpine.js
-- In-scope: visual DAG, gap/orphan/cycle detection, node-level status coloring
-- Out-of-scope: animated edge transitions, click-to-drill-down (future increment)
-
----
-
-## Plan: Option B — Habitat Thermodynamics Specialist
-
-The specialist pattern is structural convention only (no ABC): a `@dataclass(slots=True)` with `.analyze(ModuleRequest) → ModuleResponse`. Add `HabitatThermodynamicsSpecialist` — it models thermal power demand and internal habitat temperature, coupling back into `CouplingChecker` as a fourth power load. Chosen over Orbital Comms / Surface Nav as the tightest fit with the existing power-coupling architecture.
-
-**Steps**
-
-**Phase 1 — Contracts** *(no dependencies)*
-1. Add `HABITAT_THERMODYNAMICS = "habitat_thermodynamics"` to `Subsystem` in contracts.py
-
-**Phase 2 — Specialist module** *(depends on Phase 1)*
-2. Create `src/mars_agent/specialists/habitat_thermodynamics.py` — `HabitatThermodynamicsSpecialist`:
-   - Inputs: `crew_count`, `solar_flux_w_m2`, `habitat_area_m2`, `insulation_r_value`
-   - Outputs: `internal_temp_c`, `thermal_power_demand_kw`, `temp_regulation_efficiency`
-   - Gate rules: `internal_temp_c` ∈ [18°C, 26°C]; `thermal_power_demand_kw` ≤ budget
-   - Phase factors: TRANSIT=0.3, LANDING=1.0, EARLY_OPS=1.0, SCALING=1.1
-3. Export from specialists/__init__.py
-
-**Phase 3 — CouplingChecker extension** *(depends on Phase 2)*
-4. Add optional `thermal: ModuleResponse | None = None` to `CouplingChecker.evaluate()` in coupling.py
-5. New coupling rule: ECLSS + ISRU + thermal demand vs generation → HIGH conflict if over budget
-
-**Phase 4 — Planner wiring** *(depends on Phases 2 & 3)*
-6. Add `thermal: HabitatThermodynamicsSpecialist` field to `CentralPlanner` in planner.py
-7. Add `_thermal_request()` with phase-dependent inputs (mirrors `_eclss_request()` exactly)
-8. Extend `_run_modules()` to return a 4-tuple; pass `thermal=` to `coupling_checker.evaluate()`
-
-**Phase 5 — Tests** *(parallel with Phase 4; depends on Phase 2)*
-9. Create `tests/unit/test_habitat_thermodynamics.py`: gate passes nominally, gate rejects on temp > 26°C, cross-module power composition
-10. Extend `test_central_planner.py` for the 4-tuple `_run_modules` return
-
-**Relevant files**
-- contracts.py — add enum value
-- `src/mars_agent/specialists/habitat_thermodynamics.py` — NEW
-- __init__.py — add export
-- coupling.py — extend `evaluate()` + new rule
-- planner.py — new field, `_thermal_request()`, 4-tuple `_run_modules`
-- `tests/unit/test_habitat_thermodynamics.py` — NEW
-- test_central_planner.py — extend for 4-tuple
-
-**Verification**
-1. `python -m pytest tests/unit/test_habitat_thermodynamics.py -v` — 3 new tests pass
-2. `python -m pytest test_central_planner.py -v` — no regressions
-3. Full suite: `ruff + mypy + pytest` — 89+ tests passed
-
-**Decisions**
-- Optional `thermal` param keeps `CouplingChecker` backward compatible
-- Orbital Comms + Surface Navigation deferred to Phase 10d/10e
-- Negotiator not yet extended for thermal variable (future)
-
----
-
-**Which would you like to implement first — Option A (DAG UI) or Option B (Habitat Thermodynamics)?** They're independent and could also be done sequentially in one session. 
 

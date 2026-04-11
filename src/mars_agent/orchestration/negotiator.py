@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +16,16 @@ except ImportError:
 from mars_agent.orchestration.models import CrossDomainConflict, MissionGoal
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class NegotiationRound:
+    """Record of one completed negotiation round."""
+
+    round_num: int
+    reduction_fraction: float
+    accepted: bool
+    rationale: str
 
 
 class NegotiationResult(BaseModel):
@@ -45,22 +56,14 @@ class MultiAgentNegotiator:
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
         self.client = OpenAI(api_key=self.api_key) if HAS_OPENAI and self.api_key else None
 
-    def negotiate(
+    def _build_messages(
         self,
         goal: MissionGoal,
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
-    ) -> tuple[bool, float, str]:
-        """
-        Executes a multi-agent negotiation loop to resolve specific conflicts.
-        Returns a tuple of (success, new_reduction_fraction, rationale).
-        """
-        if not self.is_enabled or not self.client:
-            logger.debug("MultiAgentNegotiator is disabled or missing credentials. Skipping.")
-            return False, current_reduction, "Negotiator disabled."
-
-        logger.info("Triggering LLM multi-agent negotiation for %d conflicts.", len(conflicts))
-
+        history: tuple[NegotiationRound, ...],
+    ) -> list[dict[str, str]]:
+        """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
             f"- {c.severity.name}: {' vs '.join(s.name for s in c.impacted_subsystems)} "
             f"({c.description})"
@@ -79,22 +82,53 @@ class MultiAgentNegotiator:
             "isru_reduction_fraction must be between 0.0 and 0.8."
         )
 
+        history_section = ""
+        if history:
+            lines = ["\n\nPrior negotiation rounds:"]
+            for r in history:
+                status = "accepted" if r.accepted else "rejected"
+                lines.append(
+                    f"  Round {r.round_num + 1}: {r.reduction_fraction * 100:.1f}%"
+                    f" reduction \u2192 {status}. {r.rationale}"
+                )
+            history_section = "\n".join(lines)
+
         user_prompt = (
             f"Mission Goal: {goal.crew_size} crew, Phase: {goal.current_phase.name}.\n"
             f"Current ISRU feedstock reduction is {current_reduction * 100:.1f}%.\n"
-            f"The CouplingChecker returned these conflicts:\n"
+            "The CouplingChecker returned these conflicts:\n"
             + "\n".join(conflict_descriptions)
+            + history_section
             + "\n\nPlease propose a new ISRU feedstock reduction fraction to "
             "resolve the power deficit safely."
         )
 
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    def negotiate(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[bool, float, str]:
+        """
+        Executes a multi-agent negotiation loop to resolve specific conflicts.
+        Returns a tuple of (success, new_reduction_fraction, rationale).
+        """
+        if not self.is_enabled or not self.client:
+            logger.debug("MultiAgentNegotiator is disabled or missing credentials. Skipping.")
+            return False, current_reduction, "Negotiator disabled."
+
+        logger.info("Triggering LLM multi-agent negotiation for %d conflicts.", len(conflicts))
+
         try:
             response = self.client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=self._build_messages(goal, conflicts, current_reduction, history),
                 response_format={"type": "json_object"},
                 temperature=0.2,
             )
