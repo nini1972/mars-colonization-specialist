@@ -41,7 +41,9 @@ def _conflict() -> CrossDomainConflict:
     )
 
 
-def _negotiator_with_mock_client(response_payload: dict[str, Any]) -> tuple[MultiAgentNegotiator, MagicMock]:
+def _negotiator_with_mock_client(
+    response_payload: dict[str, Any],
+) -> tuple[MultiAgentNegotiator, MagicMock]:
     """Build an enabled negotiator whose client is a MagicMock."""
     negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
     negotiator.is_enabled = True
