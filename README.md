@@ -41,11 +41,12 @@ http://localhost:8000/dashboard
   - Option B ✅ — Habitat Thermodynamics Specialist: `HabitatThermodynamicsSpecialist` models thermal power demand and habitat temperature; coupled into `CouplingChecker` as a fourth power load; planner wired with phase-dependent thermal requests.
 - Phase 10a ✅ — LLM-driven multi-agent negotiation (`MultiAgentNegotiator`): Chief Engineer persona negotiates ISRU feedstock reductions via OpenAI Chat Completions; fully opt-in via `MARS_LLM_ORCHESTRATOR_ENABLED` + `OPENAI_API_KEY`; deterministic fallback on any failure path.
 - Phase 10b ✅ — Multi-turn negotiation history: `NegotiationRound` dataclass accumulates accepted/rejected rounds; each iteration passes prior rounds to the LLM for context; `_build_messages()` injects a structured history section; mock-client unit tests added (101 tests passing).
+  - Option 1 ✅ — Expanded negotiation variables: `NegotiationResult` gains `crew_reduction` (int 0–5) and `dust_degradation_adjustment` (float 0.0–0.1); `NegotiationRound` records both per round; `_build_messages()` advertises three knobs to the LLM; `_handle_replan()` applies changes via `dataclasses.replace()` on `MissionGoal`; `plan()` threads the updated goal forward each replan iteration (104 tests passing).
+- Option D ✅ — Cloud-ready infrastructure: `Dockerfile` (single image, non-root `mars` user, `/data` volume mount); `.dockerignore`; `docker-compose.yml` with named `mars_data` volume and env-driven config; `GET /health` liveness + `GET /ready` readiness probes added to `dashboard_app.py`; `python -m mars_agent.dashboard` entry point via new `src/mars_agent/dashboard/__main__.py`; `uvicorn` added as core dependency; `scripts/docker-build.ps1` + `scripts/docker-run.ps1` (113 tests passing).
 
 ## Next
 
-- Phase 10b remaining options: expand negotiation variables beyond ISRU feedstock; add `AsyncOpenAI` support.
-- Phase 10c/10d: Option D — cloud infrastructure (Dockerfile, health endpoints, deployment scripts).
+- Phase 10b — Add `AsyncOpenAI` async negotiation support (open for future phase).
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
 ## MCP Error Payload Contract

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -534,3 +534,23 @@ def replay_fragment(
             "degraded": bool(replay.get("persistence_degraded", False)),
         },
     )
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    """Liveness probe — always returns 200 when the process is alive."""
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    """Readiness probe — returns 200 when persistence is healthy, 503 when degraded."""
+    try:
+        snapshot = telemetry_dashboard_snapshot()
+        replay_panel = cast(Mapping[str, object], snapshot.get("replay_degraded_panel", {}))
+        degraded = bool(replay_panel.get("persistence_degraded", False))
+    except Exception:  # noqa: BLE001
+        degraded = True
+    if degraded:
+        return JSONResponse({"status": "degraded"}, status_code=503)
+    return JSONResponse({"status": "ready"})

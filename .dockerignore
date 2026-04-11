@@ -1,0 +1,36 @@
+# Version control
+.git/
+.gitignore
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+
+# Test suite (not needed in the image)
+tests/
+
+# Local runtime artefacts
+*.sqlite3
+stdout.log
+stderr.log
+
+# Development tooling
+*.ps1
+
+# Build outputs
+*.egg-info/
+dist/
+build/
+
+# Docs / notes
+docs/
+conversation_gemini.md
+phase-9a-complete.md
