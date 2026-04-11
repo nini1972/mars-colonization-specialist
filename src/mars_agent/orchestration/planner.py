@@ -242,7 +242,12 @@ class CentralPlanner:
             inputs=(
                 ModuleInput(
                     "crew_count",
-                    UncertaintyBounds(float(goal.crew_size), float(goal.crew_size), float(goal.crew_size), "crew"),
+                    UncertaintyBounds(
+                        float(goal.crew_size),
+                        float(goal.crew_size),
+                        float(goal.crew_size),
+                        "crew",
+                    ),
                 ),
                 ModuleInput(
                     "solar_flux_w_m2",
@@ -258,7 +263,12 @@ class CentralPlanner:
                 ),
                 ModuleInput(
                     "thermal_power_budget_kw",
-                    UncertaintyBounds(thermal_budget_kw, thermal_budget_kw * 0.9, thermal_budget_kw * 1.1, "kW"),
+                    UncertaintyBounds(
+                        thermal_budget_kw,
+                        thermal_budget_kw * 0.9,
+                        thermal_budget_kw * 1.1,
+                        "kW",
+                    ),
                 ),
             ),
         )

@@ -45,10 +45,19 @@ def _thermal_request(
         desired_confidence=0.9,
         inputs=(
             ModuleInput("crew_count", UncertaintyBounds(crew, crew, crew, "crew")),
-            ModuleInput("solar_flux_w_m2", UncertaintyBounds(solar_flux, solar_flux * 0.9, solar_flux * 1.1, "W/m²")),
+            ModuleInput(
+                "solar_flux_w_m2",
+                UncertaintyBounds(solar_flux, solar_flux * 0.9, solar_flux * 1.1, "W/m²"),
+            ),
             ModuleInput("habitat_area_m2", UncertaintyBounds(area, area, area, "m²")),
-            ModuleInput("insulation_r_value", UncertaintyBounds(r_value, r_value, r_value, "m²·K/W")),
-            ModuleInput("thermal_power_budget_kw", UncertaintyBounds(budget_kw, budget_kw * 0.9, budget_kw * 1.1, "kW")),
+            ModuleInput(
+                "insulation_r_value",
+                UncertaintyBounds(r_value, r_value, r_value, "m²·K/W"),
+            ),
+            ModuleInput(
+                "thermal_power_budget_kw",
+                UncertaintyBounds(budget_kw, budget_kw * 0.9, budget_kw * 1.1, "kW"),
+            ),
         ),
     )
 
@@ -61,7 +70,10 @@ def _coupling_eclss_request(evidence: tuple[EvidenceReference, ...]) -> ModuleRe
         inputs=(
             ModuleInput("crew_count", UncertaintyBounds(4.0, 4.0, 4.0, "crew")),
             ModuleInput("o2_demand_per_crew_kg_day", UncertaintyBounds(0.84, 0.8, 0.9, "kg/day")),
-            ModuleInput("water_demand_per_crew_l_day", UncertaintyBounds(18.0, 16.0, 20.0, "L/day")),
+            ModuleInput(
+                "water_demand_per_crew_l_day",
+                UncertaintyBounds(18.0, 16.0, 20.0, "L/day"),
+            ),
             ModuleInput("recycle_efficiency", UncertaintyBounds(0.87, 0.82, 0.9, "ratio")),
             ModuleInput("thermal_load_kw", UncertaintyBounds(5.0, 4.5, 5.5, "kW")),
             ModuleInput("o2_partial_pressure_kpa", UncertaintyBounds(20.8, 20.0, 21.5, "kPa")),
@@ -78,7 +90,10 @@ def _coupling_isru_request(evidence: tuple[EvidenceReference, ...]) -> ModuleReq
             ModuleInput("regolith_feed_kg_day", UncertaintyBounds(10.0, 9.0, 11.0, "kg/day")),
             ModuleInput("ice_grade_fraction", UncertaintyBounds(0.24, 0.20, 0.28, "ratio")),
             ModuleInput("reactor_efficiency", UncertaintyBounds(0.74, 0.68, 0.80, "ratio")),
-            ModuleInput("electrolysis_kwh_per_kg_o2", UncertaintyBounds(44.0, 40.0, 48.0, "kWh/kg")),
+            ModuleInput(
+                "electrolysis_kwh_per_kg_o2",
+                UncertaintyBounds(44.0, 40.0, 48.0, "kWh/kg"),
+            ),
             ModuleInput("available_power_kw", UncertaintyBounds(20.0, 18.0, 22.0, "kW")),
         ),
     )
