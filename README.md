@@ -19,6 +19,53 @@ If you want to use a different port:
 navigate to:
 http://localhost:8000/dashboard
 
+
+Remark: If you see the "persistence degraded" warning in the logs, it means the dashboard is running with the in-memory persistence backend instead of SQLite. This is expected if you haven't set the `MARS_MCP_PERSISTENCE_BACKEND` environment variable to `sqlite`. The dashboard will still function, but any state will be lost on restart.
+Fix: set the env var before starting the dashboard:
+$env:MARS_MCP_PERSISTENCE_BACKEND = "sqlite"
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+
+Or permanently in your shell session:
+$env:MARS_MCP_PERSISTENCE_SQLITE_PATH = ".\.mars_mcp_runtime.sqlite3"
+$env:MARS_MCP_PERSISTENCE_BACKEND    = "sqlite"
+
+When using Docker/docker-compose, the env var is already defaulted to sqlite in docker-compose.yml and docker-run.ps1 — so the message only appears in the plain uvicorn dev workflow where no env vars are set.
+
+## Start Docker-compose
+Option A — docker-compose (recommended, handles build + run together):
+
+# From the repo root — builds image and starts the dashboard
+docker compose up --build
+
+# Or detached (background):
+docker compose up --build -d
+
+Then navigate to http://localhost:8000/dashboard.
+To stop:docker compose down
+to stop and remove Sqlite volume:docker compose down -v
+
+Option B — PowerShell scripts (build once, run separately):
+
+# 1. Build the image
+./scripts/docker-build.ps1
+
+# 2. Run the container (foreground)
+./scripts/docker-run.ps1
+
+# Run detached on a different port:
+./scripts/docker-run.ps1 -Port 8080 -Detach
+
+Then navigate to http://localhost:8000/dashboard. To stop the detached container:docker stop mars_dashboard
+
+Then rebuild:
+docker compose up --build
+# or
+./scripts/docker-build.ps1
+
+SQLite persistence is auto-configured in both paths — the container stores the .sqlite3 file in the mars_data named Docker volume at /data/mars_mcp_runtime.sqlite3. The "persistence degraded" warning will not appear when running via Docker.
+
+Prerequisites: Docker Desktop must be running before either command.
+
 ## Progress
 
 - Phase 0: Project bootstrap and CI gates.

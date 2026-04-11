@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import os
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Final, cast
 
@@ -12,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from mars_agent.mcp.server import (
+    _TELEMETRY,
     telemetry_correlation_chain,
     telemetry_dashboard_snapshot,
     telemetry_invocation_detail,
@@ -24,10 +27,26 @@ _BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _BASE_DIR / "web" / "templates"
 _STATIC_DIR = _BASE_DIR / "web" / "static"
 
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-app = FastAPI(title="Mars Mission Ops Dashboard")
-app.mount("/dashboard/static", StaticFiles(directory=str(_STATIC_DIR)), name="dashboard-static")
+_DEMO_RECORDS: Final[list[dict[str, object]]] = [
+    {"event": "tool.success", "tool": "mars.plan",       "request_id": "demo-req-plan-1",  "correlation_id": "demo-corr-1", "mission_id": "mars-demo", "outcome": "success", "latency_ms": 142.3, "auth_enabled": False, "error_code": None, "recorded_at": "2026-04-11T12:00:00.000+00:00"},
+    {"event": "tool.success", "tool": "mars.simulate",   "request_id": "demo-req-sim-1",   "correlation_id": "demo-corr-1", "mission_id": "mars-demo", "outcome": "success", "latency_ms": 389.1, "auth_enabled": False, "error_code": None, "recorded_at": "2026-04-11T12:00:01.000+00:00"},
+    {"event": "tool.success", "tool": "mars.governance", "request_id": "demo-req-gov-1",   "correlation_id": "demo-corr-1", "mission_id": "mars-demo", "outcome": "success", "latency_ms":  58.7, "auth_enabled": False, "error_code": None, "recorded_at": "2026-04-11T12:00:02.000+00:00"},
+    {"event": "tool.success", "tool": "mars.benchmark",  "request_id": "demo-req-bench-1", "correlation_id": "demo-corr-1", "mission_id": "mars-demo", "outcome": "success", "latency_ms":  44.2, "auth_enabled": False, "error_code": None, "recorded_at": "2026-04-11T12:00:03.000+00:00"},
+    {"event": "tool.error",   "tool": "mars.plan",       "request_id": "demo-req-plan-2",  "correlation_id": "demo-corr-2", "mission_id": "mars-demo", "outcome": "failure", "latency_ms":  12.0, "auth_enabled": False, "error_code": "invalid_request", "recorded_at": "2026-04-11T12:00:04.000+00:00"},
+]
 
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
+    if os.getenv("MARS_DEMO_SEED", "").lower() == "true":
+        for record in _DEMO_RECORDS:
+            _TELEMETRY.record(record)
+    yield
+
+
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+app = FastAPI(title="Mars Mission Ops Dashboard", lifespan=_lifespan)
+app.mount("/dashboard/static", StaticFiles(directory=str(_STATIC_DIR)), name="dashboard-static")
 
 def _validate_exact_keys(
     payload: Mapping[str, object],

@@ -34,10 +34,10 @@
          role="img"
          tabindex="0"
          aria-label="{{ node['label'] }}: {{ node['status'] }}, {{ node['event_count'] }} event(s){% if node['latest_at'] %}, last at {{ node['latest_at'] }}{% endif %}"
-         @mouseenter="tooltip = {label: {{ node['label'] | tojson }}, status: {{ node['status'] | tojson }}, count: {{ node['event_count'] }}, latest: {{ node['latest_at'] | tojson }}, outcome: {{ node['latest_outcome'] | tojson }}}"
-         @mouseleave="tooltip = null"
-         @focus="tooltip = {label: {{ node['label'] | tojson }}, status: {{ node['status'] | tojson }}, count: {{ node['event_count'] }}, latest: {{ node['latest_at'] | tojson }}, outcome: {{ node['latest_outcome'] | tojson }}}"
-         @blur="tooltip = null">
+         @mouseenter='tooltip = {label: {{ node["label"] | tojson }}, status: {{ node["status"] | tojson }}, count: {{ node["event_count"] }}, latest: {{ node["latest_at"] | tojson }}, outcome: {{ node["latest_outcome"] | tojson }}}'
+         @mouseleave='tooltip = null'
+         @focus='tooltip = {label: {{ node["label"] | tojson }}, status: {{ node["status"] | tojson }}, count: {{ node["event_count"] }}, latest: {{ node["latest_at"] | tojson }}, outcome: {{ node["latest_outcome"] | tojson }}}'
+         @blur='tooltip = null'>
         <circle cx="{{ cx }}" cy="35" r="26"/>
         <text x="{{ cx }}" y="39" text-anchor="middle" font-size="9" font-family="inherit">{{ node["label"] }}</text>
         <title>{{ node["label"] }} · {{ node["status"] }} · {{ node["event_count"] }} event(s){% if node["latest_at"] %} · {{ node["latest_at"] }}{% endif %}</title>

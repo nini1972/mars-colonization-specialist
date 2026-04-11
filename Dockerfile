@@ -15,13 +15,11 @@ RUN addgroup --system mars && adduser --system --ingroup mars mars
 
 WORKDIR /app
 
-# Install dependencies before copying source so the layer is cached
+# Copy everything pip needs to build and install the package
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir .
-
-# Copy application source and static configs
 COPY src ./src
 COPY configs ./configs
+RUN pip install --no-cache-dir .
 
 # Persistent data directory (mount a volume here in production)
 RUN mkdir -p /data && chown mars:mars /data
