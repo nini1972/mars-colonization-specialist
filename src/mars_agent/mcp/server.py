@@ -44,7 +44,7 @@ from mars_agent.simulation import SimulationPipeline
 from mars_agent.simulation.pipeline import SimulationReport
 
 _adapter = MarsMCPAdapter()
-mcp = FastMCP("mars-colonization-specialist")
+mcp = FastMCP("mars-colonization-specialist", streamable_http_path="/")
 _TOOL_ERROR_SCHEMA_VERSION = "1.0"
 _AUTH_ENABLED_ENV = "MARS_MCP_AUTH_ENABLED"
 _AUTH_TOKEN_ENV = "MARS_MCP_AUTH_TOKEN"

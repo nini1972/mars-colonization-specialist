@@ -671,3 +671,15 @@ def test_correlation_fragment_unknown_tool_gets_timeline_class(
     assert "timeline-unknown" in response.text
     assert "unrecognized tools" in response.text
 
+
+def test_mcp_http_endpoint_is_mounted() -> None:
+    """The /mcp sub-app must be registered on the FastAPI app at startup."""
+    from starlette.routing import Mount
+
+    mounted_paths = [
+        route.path
+        for route in dashboard_app.app.routes
+        if isinstance(route, Mount)
+    ]
+    assert "/mcp" in mounted_paths
+

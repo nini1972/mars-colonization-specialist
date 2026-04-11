@@ -15,11 +15,14 @@ from fastapi.templating import Jinja2Templates
 
 from mars_agent.mcp.server import (
     _TELEMETRY,
+    mcp,
     telemetry_correlation_chain,
     telemetry_dashboard_snapshot,
     telemetry_invocation_detail,
     telemetry_list_events,
 )
+
+_MCP_HTTP_APP = mcp.streamable_http_app()
 
 UI_SCHEMA_VERSION: Final[str] = "1.0"
 
@@ -41,12 +44,14 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     if os.getenv("MARS_DEMO_SEED", "").lower() == "true":
         for record in _DEMO_RECORDS:
             _TELEMETRY.record(record)
-    yield
+    async with mcp.session_manager.run():
+        yield
 
 
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 app = FastAPI(title="Mars Mission Ops Dashboard", lifespan=_lifespan)
 app.mount("/dashboard/static", StaticFiles(directory=str(_STATIC_DIR)), name="dashboard-static")
+app.mount("/mcp", _MCP_HTTP_APP)
 
 def _validate_exact_keys(
     payload: Mapping[str, object],
