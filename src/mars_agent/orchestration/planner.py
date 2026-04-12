@@ -31,8 +31,6 @@ from mars_agent.specialists import (
     UncertaintyBounds,
 )
 
-
-
 # Built-in per-conflict knob adjustments: (isru_delta, crew_delta, dust_delta).
 # Overridable via PlannerSettings.conflict_knob_overrides.
 _CONFLICT_KNOB_TABLE: dict[str, tuple[float, int, float]] = {

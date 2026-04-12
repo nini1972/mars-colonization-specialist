@@ -120,7 +120,9 @@ def test_thermal_shortfall_conflict_present_with_severely_constrained_power() ->
 # ---------------------------------------------------------------------------
 
 
-def _make_conflict(conflict_id: str, severity: ConflictSeverity = ConflictSeverity.HIGH) -> CrossDomainConflict:
+def _make_conflict(
+    conflict_id: str, severity: ConflictSeverity = ConflictSeverity.HIGH
+) -> CrossDomainConflict:
     return CrossDomainConflict(
         conflict_id=conflict_id,
         description=f"Test conflict: {conflict_id}",
