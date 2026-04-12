@@ -32,6 +32,18 @@ from mars_agent.specialists import (
 )
 
 
+
+# Built-in per-conflict knob adjustments: (isru_delta, crew_delta, dust_delta).
+# Overridable via PlannerSettings.conflict_knob_overrides.
+_CONFLICT_KNOB_TABLE: dict[str, tuple[float, int, float]] = {
+    "coupling.power_balance.thermal_shortfall": (0.05, 0, 0.0),
+    "coupling.power_balance.shortfall": (0.05, 0, 0.0),
+    "coupling.isru_power_share.high": (0.05, 0, 0.02),
+    "coupling.power_margin.low": (0.03, 1, 0.0),
+    "coupling.power_gate.failed": (0.05, 1, 0.0),
+}
+
+
 def _replace_input(request: ModuleRequest, name: str, updated: UncertaintyBounds) -> ModuleRequest:
     rewritten = tuple(
         ModuleInput(item.name, updated) if item.name == name else item for item in request.inputs
@@ -307,6 +319,43 @@ class CentralPlanner:
 
         return eclss_response, isru_response, power_response, thermal_response
 
+    def _conflict_aware_fallback(
+        self,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+    ) -> tuple[float, int, float, str]:
+        """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
+
+        Deltas are combined via max() per knob across all active conflict IDs.
+        Unknown IDs fall back to replan_feedstock_reduction with no crew/dust change.
+        """
+        table: dict[str, tuple[float, int, float]] = {
+            **_CONFLICT_KNOB_TABLE,
+            **self.settings.conflict_knob_overrides,
+        }
+        isru_delta = 0.0
+        crew_delta = 0
+        dust_delta = 0.0
+        named: list[str] = []
+        for conflict in conflicts:
+            cid = conflict.conflict_id
+            d_isru, d_crew, d_dust = table.get(
+                cid, (self.settings.replan_feedstock_reduction, 0, 0.0)
+            )
+            isru_delta = max(isru_delta, d_isru)
+            crew_delta = max(crew_delta, d_crew)
+            dust_delta = max(dust_delta, d_dust)
+            named.append(cid)
+        new_isru_reduction = min(0.8, current_reduction + isru_delta)
+        crew_delta = min(5, crew_delta)
+        dust_delta = min(0.1, dust_delta)
+        conflict_list = ", ".join(named) if named else "none"
+        rationale = (
+            f"Conflict-aware fallback for [{conflict_list}]: "
+            f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f}."
+        )
+        return new_isru_reduction, crew_delta, dust_delta, rationale
+
     def _handle_replan(
         self,
         goal: MissionGoal,
@@ -322,15 +371,9 @@ class CentralPlanner:
             history=history,
         )
         if not accepted:
-            new_reduction = min(
-                0.8, current_reduction + self.settings.replan_feedstock_reduction
+            new_reduction, crew_reduction, dust_adj, rationale = self._conflict_aware_fallback(
+                conflicts, current_reduction
             )
-            rationale = (
-                "Detected cross-domain conflicts; "
-                "reducing ISRU feedstock demand (deterministic fallback)."
-            )
-            crew_reduction = 0
-            dust_adj = 0.0
         final_reduction = max(current_reduction, new_reduction)
         updated_goal = dataclasses.replace(
             goal,
