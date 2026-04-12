@@ -87,6 +87,7 @@ class PlannerSettings:
     max_replan_attempts: int = 2
     replan_feedstock_reduction: float = 0.2
     conflict_knob_overrides: dict[str, tuple[float, int, float]] = field(default_factory=dict)
+    negotiation_store_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

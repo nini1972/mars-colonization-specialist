@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.orchestration import (
@@ -9,6 +10,11 @@ from mars_agent.orchestration import (
     MissionPhase,
     MitigationOption,
     PlannerSettings,
+)
+from mars_agent.orchestration.negotiation_store import (
+    NegotiationMemoryStore,
+    NegotiationOutcome,
+    _conflict_fingerprint,
 )
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import Subsystem
@@ -180,4 +186,122 @@ def test_conflict_aware_fallback_unknown_id_uses_default() -> None:
     assert new_reduction == 0.15
     assert crew_delta == 0
     assert dust_delta == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for Track D — Persistent Negotiation Memory
+# ---------------------------------------------------------------------------
+
+
+def _constrained_goal() -> MissionGoal:
+    """Returns a goal that reliably triggers coupling conflicts + replanning."""
+    return MissionGoal(
+        mission_id="mars-colony-track-d",
+        crew_size=80,
+        horizon_years=2.0,
+        current_phase=MissionPhase.EARLY_OPERATIONS,
+        solar_generation_kw=80.0,
+        battery_capacity_kwh=1000.0,
+        dust_degradation_fraction=0.4,
+        hours_without_sun=28.0,
+        desired_confidence=0.9,
+    )
+
+
+def test_cache_stores_outcome_after_fallback_replan() -> None:
+    """After a replan, the store holds an entry for the conflict fingerprint."""
+    store = NegotiationMemoryStore()
+    planner = CentralPlanner(
+        settings=PlannerSettings(max_replan_attempts=1),
+        negotiation_store=store,
+    )
+    goal = _constrained_goal()
+    result = planner.plan(goal=goal, evidence=_evidence())
+
+    # At least one replan must have occurred (conflicts expected with constrained goal)
+    assert result.replan_events, "Expected at least one replan for the constrained goal"
+    # One or more fingerprints must be stored
+    assert store._cache, "Expected negotiation outcomes to be stored in the cache"
+
+
+def test_cache_hit_produces_memory_hit_rationale() -> None:
+    """When a pre-populated cache entry exists, _handle_replan returns a [memory hit] rationale."""
+    goal = _constrained_goal()
+    conflicts = (_make_conflict("coupling.power_balance.shortfall"),)
+    fp = _conflict_fingerprint(goal, conflicts)
+
+    seeded_outcome = NegotiationOutcome(
+        conflict_fingerprint=fp,
+        isru_reduction_fraction=0.15,
+        crew_reduction=0,
+        dust_degradation_adjustment=0.0,
+        rationale="seeded rationale",
+        accepted=True,
+        is_fallback=True,
+        stored_at="2026-04-12T00:00:00+00:00",
+        hit_count=0,
+    )
+    store = NegotiationMemoryStore()
+    store.store(seeded_outcome)
+
+    planner = CentralPlanner(negotiation_store=store)
+    new_reduction, _updated_goal, rationale, neg_round = planner._handle_replan(
+        goal=goal,
+        conflicts=conflicts,
+        current_reduction=0.0,
+    )
+
+    assert "[memory hit]" in rationale
+    assert "[fallback]" in rationale
+    assert "seeded rationale" in rationale
+    assert new_reduction == 0.15
+    # hit_count should have advanced
+    cached = store.lookup(fp)
+    assert cached is not None
+    assert cached.hit_count == 1
+
+
+def test_sqlite_store_persists_across_planner_instances(tmp_path: Path) -> None:
+    """Outcomes written by one planner instance are replayed by a second."""
+    db_path = tmp_path / "negotiation.db"
+    goal = _constrained_goal()
+
+    # First planner — populates the SQLite store
+    planner1 = CentralPlanner(
+        settings=PlannerSettings(
+            max_replan_attempts=1,
+            negotiation_store_path=str(db_path),
+        )
+    )
+    result1 = planner1.plan(goal=goal, evidence=_evidence())
+    assert result1.replan_events, "First run must trigger at least one replan"
+
+    # Second planner — loads same DB; should hit the cache
+    planner2 = CentralPlanner(
+        settings=PlannerSettings(
+            max_replan_attempts=1,
+            negotiation_store_path=str(db_path),
+        )
+    )
+    result2 = planner2.plan(goal=goal, evidence=_evidence())
+
+    # At least one replan event in the second run should carry a [memory hit] tag
+    assert any(
+        "[memory hit]" in ev.reason for ev in result2.replan_events
+    ), "Expected [memory hit] in second-run replan events"
+
+
+def test_is_fallback_true_when_negotiator_disabled() -> None:
+    """With the negotiator disabled (default in tests), stored outcome has is_fallback=True."""
+    store = NegotiationMemoryStore()
+    goal = _constrained_goal()
+    conflicts = (_make_conflict("coupling.power_balance.shortfall"),)
+
+    planner = CentralPlanner(negotiation_store=store)
+    planner._handle_replan(goal=goal, conflicts=conflicts, current_reduction=0.0)
+
+    fp = _conflict_fingerprint(goal, conflicts)
+    cached = store.lookup(fp)
+    assert cached is not None
+    assert cached.is_fallback is True
 

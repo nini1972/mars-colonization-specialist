@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import dataclasses
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from mars_agent.orchestration.coupling import CouplingChecker
 from mars_agent.orchestration.models import (
@@ -15,6 +16,12 @@ from mars_agent.orchestration.models import (
     PlanResult,
     ReadinessSignals,
     ReplanEvent,
+)
+from mars_agent.orchestration.negotiation_store import (
+    NegotiationMemoryStore,
+    NegotiationOutcome,
+    _conflict_fingerprint,
+    now_utc_iso,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
 from mars_agent.orchestration.state_machine import MissionPhaseStateMachine
@@ -120,6 +127,13 @@ class CentralPlanner:
     state_machine: MissionPhaseStateMachine = field(default_factory=MissionPhaseStateMachine)
     settings: PlannerSettings = field(default_factory=PlannerSettings)
     negotiator: MultiAgentNegotiator = field(default_factory=MultiAgentNegotiator)
+    negotiation_store: NegotiationMemoryStore = field(default_factory=NegotiationMemoryStore)
+
+    def __post_init__(self) -> None:
+        if self.settings.negotiation_store_path is not None:
+            self.negotiation_store = NegotiationMemoryStore(
+                Path(self.settings.negotiation_store_path)
+            )
 
     def _eclss_request(
         self,
@@ -362,15 +376,57 @@ class CentralPlanner:
         history: tuple[NegotiationRound, ...] = (),
     ) -> tuple[float, MissionGoal, str, NegotiationRound]:
         """Negotiate or fall back; return (new_reduction, updated_goal, rationale, round)."""
-        accepted, new_reduction, crew_reduction, dust_adj, rationale = self.negotiator.negotiate(
-            goal=goal,
-            conflicts=conflicts,
-            current_reduction=current_reduction,
-            history=history,
-        )
-        if not accepted:
-            new_reduction, crew_reduction, dust_adj, rationale = self._conflict_aware_fallback(
-                conflicts, current_reduction
+        fingerprint = _conflict_fingerprint(goal, conflicts)
+        cached = self.negotiation_store.lookup(fingerprint)
+        if cached is not None and cached.accepted:
+            new_reduction = min(0.8, max(current_reduction, cached.isru_reduction_fraction))
+            crew_reduction = cached.crew_reduction
+            dust_adj = cached.dust_degradation_adjustment
+            memory_tag = "fallback" if cached.is_fallback else "llm"
+            rationale = f"[memory hit][{memory_tag}] {cached.rationale}"
+            accepted = True
+            self.negotiation_store.store(
+                NegotiationOutcome(
+                    conflict_fingerprint=fingerprint,
+                    isru_reduction_fraction=cached.isru_reduction_fraction,
+                    crew_reduction=crew_reduction,
+                    dust_degradation_adjustment=dust_adj,
+                    rationale=cached.rationale,
+                    accepted=cached.accepted,
+                    is_fallback=cached.is_fallback,
+                    stored_at=cached.stored_at,
+                    hit_count=cached.hit_count + 1,
+                )
+            )
+        else:
+            accepted, new_reduction, crew_reduction, dust_adj, rationale = (
+                self.negotiator.negotiate(
+                    goal=goal,
+                    conflicts=conflicts,
+                    current_reduction=current_reduction,
+                    history=history,
+                )
+            )
+            is_fallback: bool
+            if not accepted:
+                new_reduction, crew_reduction, dust_adj, rationale = (
+                    self._conflict_aware_fallback(conflicts, current_reduction)
+                )
+                is_fallback = True
+            else:
+                is_fallback = False
+            self.negotiation_store.store(
+                NegotiationOutcome(
+                    conflict_fingerprint=fingerprint,
+                    isru_reduction_fraction=new_reduction,
+                    crew_reduction=crew_reduction,
+                    dust_degradation_adjustment=dust_adj,
+                    rationale=rationale,
+                    accepted=True,
+                    is_fallback=is_fallback,
+                    stored_at=now_utc_iso(),
+                    hit_count=0,
+                )
             )
         final_reduction = max(current_reduction, new_reduction)
         updated_goal = dataclasses.replace(
