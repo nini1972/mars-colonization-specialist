@@ -90,9 +90,11 @@ Prerequisites: Docker Desktop must be running before either command.
 - Phase 10b ✅ — Multi-turn negotiation history: `NegotiationRound` dataclass accumulates accepted/rejected rounds; each iteration passes prior rounds to the LLM for context; `_build_messages()` injects a structured history section; mock-client unit tests added (101 tests passing).
   - Option 1 ✅ — Expanded negotiation variables: `NegotiationResult` gains `crew_reduction` (int 0–5) and `dust_degradation_adjustment` (float 0.0–0.1); `NegotiationRound` records both per round; `_build_messages()` advertises three knobs to the LLM; `_handle_replan()` applies changes via `dataclasses.replace()` on `MissionGoal`; `plan()` threads the updated goal forward each replan iteration (104 tests passing).
 - Option D ✅ — Cloud-ready infrastructure: `Dockerfile` (single image, non-root `mars` user, `/data` volume mount); `.dockerignore`; `docker-compose.yml` with named `mars_data` volume and env-driven config; `GET /health` liveness + `GET /ready` readiness probes added to `dashboard_app.py`; `python -m mars_agent.dashboard` entry point via new `src/mars_agent/dashboard/__main__.py`; `uvicorn` added as core dependency; `scripts/docker-build.ps1` + `scripts/docker-run.ps1` (113 tests passing).
+- Track A ✅ — Parallel specialist execution: ECLSS, ISRU, and HabitatThermodynamics run concurrently via `ThreadPoolExecutor(max_workers=3)`; PowerSpecialist runs after (depends on ECLSS + ISRU outputs); no public API changes (112 tests passing). See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
 
 ## Next
 
+- Multi-agent architecture improvements (Tracks B–E) — see [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
 - Phase 10b — Add `AsyncOpenAI` async negotiation support (open for future phase).
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
@@ -214,4 +216,20 @@ The MCP server now emits structured observability signals while preserving the e
 - Unit tests exercise the LLM path via `MultiAgentNegotiator.__new__` + mock OpenAI client injection (no live API key required).
 
 
+
+### Multi-agent architecture
+
+> Full analysis and improvement backlog: [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13)
+
+**Current architecture:** 4 domain specialists (ECLSS, Power, ISRU, HabitatThermodynamics) + 5 orchestrators (CentralPlanner, MultiAgentNegotiator, CouplingChecker, MissionPhaseStateMachine, GovernanceGate). Communication is entirely synchronous direct function calls.
+
+**Improvement tracks:**
+
+| Track | Description | Status |
+|-------|-------------|--------|
+| A | Parallel specialist execution — ECLSS, ISRU, Thermal run concurrently via `ThreadPoolExecutor`; Power waits on their outputs | ✅ Done (112 tests passing) |
+| B | Smarter negotiation fallback — conflict-aware knob selection instead of fixed 20% ISRU reduction | Backlog |
+| C | Specialist capability protocol — `capabilities()` method on each specialist so the negotiator can query trade-off preferences | Backlog |
+| D | Persistent negotiation memory — resolved conflict patterns persisted to SQLite for cross-mission reuse | Backlog |
+| E | Agent health panel in dashboard — per-specialist call count, avg latency, and last outcome fragment | Backlog |
 

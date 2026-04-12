@@ -546,6 +546,9 @@ def invocations_fragment(
     outcome: str | None = None,
     error_code: str | None = None,
 ) -> HTMLResponse:
+    tool = tool or None
+    outcome = outcome or None
+    error_code = error_code or None
     try:
         invocations = _get_invocations_fragment_data(
             page=page,

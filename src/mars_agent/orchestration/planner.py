@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses
 from dataclasses import dataclass, field
 
@@ -282,9 +283,19 @@ class CentralPlanner:
     ) -> tuple[ModuleResponse, ModuleResponse, ModuleResponse, ModuleResponse]:
         eclss_request = self._eclss_request(goal, evidence)
         isru_request = self._isru_request(goal, evidence, reduction=isru_reduction)
+        thermal_request = self._thermal_request(goal, evidence)
 
-        eclss_response = self.eclss.analyze(eclss_request)
-        isru_response = self.isru.analyze(isru_request)
+        # ECLSS, ISRU, and Thermal are independent — run them concurrently.
+        # Power depends on the ECLSS + ISRU outputs (critical_load_kw) so it
+        # must wait for the first wave to complete.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            eclss_fut = pool.submit(self.eclss.analyze, eclss_request)
+            isru_fut = pool.submit(self.isru.analyze, isru_request)
+            thermal_fut = pool.submit(self.thermal.analyze, thermal_request)
+
+            eclss_response = eclss_fut.result()
+            isru_response = isru_fut.result()
+            thermal_response = thermal_fut.result()
 
         critical_load_kw = (
             eclss_response.get_metric("eclss_power_demand_kw").value.mean
@@ -293,9 +304,6 @@ class CentralPlanner:
 
         power_request = self._power_request(goal, evidence, critical_load_kw)
         power_response = self.power.analyze(power_request)
-
-        thermal_request = self._thermal_request(goal, evidence)
-        thermal_response = self.thermal.analyze(thermal_request)
 
         return eclss_response, isru_response, power_response, thermal_response
 
