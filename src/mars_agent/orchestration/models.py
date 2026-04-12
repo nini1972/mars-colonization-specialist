@@ -69,6 +69,15 @@ class ReplanEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class SpecialistTiming:
+    """Per-specialist latency and gate result captured during one planning run."""
+
+    subsystem_name: str
+    latency_ms: float
+    gate_accepted: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PlanResult:
     """Integrated output from one planning cycle."""
 
@@ -78,6 +87,7 @@ class PlanResult:
     subsystem_responses: tuple[ModuleResponse, ...]
     conflicts: tuple[CrossDomainConflict, ...]
     replan_events: tuple[ReplanEvent, ...] = ()
+    specialist_timings: tuple[SpecialistTiming, ...] = ()
 
 
 @dataclass(slots=True)

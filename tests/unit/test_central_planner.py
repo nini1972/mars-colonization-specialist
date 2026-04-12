@@ -10,6 +10,7 @@ from mars_agent.orchestration import (
     MissionPhase,
     MitigationOption,
     PlannerSettings,
+    SpecialistTiming,
 )
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
@@ -304,4 +305,47 @@ def test_is_fallback_true_when_negotiator_disabled() -> None:
     cached = store.lookup(fp)
     assert cached is not None
     assert cached.is_fallback is True
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for Track E — Specialist Timing Capture
+# ---------------------------------------------------------------------------
+
+
+def _basic_goal() -> MissionGoal:
+    return MissionGoal(
+        mission_id="mars-timing-check",
+        crew_size=20,
+        horizon_years=1.0,
+        current_phase=MissionPhase.LANDING,
+        solar_generation_kw=500.0,
+        battery_capacity_kwh=8000.0,
+        dust_degradation_fraction=0.1,
+        hours_without_sun=16.0,
+        desired_confidence=0.9,
+    )
+
+
+def test_specialist_timings_length_equals_four() -> None:
+    """PlanResult.specialist_timings always contains exactly 4 entries (one per subsystem)."""
+    planner = CentralPlanner()
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+    assert len(result.specialist_timings) == 4
+
+
+def test_specialist_timings_positive_latency() -> None:
+    """Every SpecialistTiming entry must report a positive latency_ms."""
+    planner = CentralPlanner()
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+    for timing in result.specialist_timings:
+        assert isinstance(timing, SpecialistTiming)
+        assert timing.latency_ms > 0.0
+
+
+def test_specialist_timings_gate_accepted_is_bool() -> None:
+    """gate_accepted must be a Python bool (not an int or float)."""
+    planner = CentralPlanner()
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+    for timing in result.specialist_timings:
+        assert isinstance(timing.gate_accepted, bool)
 

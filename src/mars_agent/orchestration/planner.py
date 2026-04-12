@@ -6,6 +6,8 @@ import concurrent.futures
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
+from typing import Protocol
 
 from mars_agent.orchestration.coupling import CouplingChecker
 from mars_agent.orchestration.models import (
@@ -16,6 +18,7 @@ from mars_agent.orchestration.models import (
     PlanResult,
     ReadinessSignals,
     ReplanEvent,
+    SpecialistTiming,
 )
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
@@ -37,6 +40,18 @@ from mars_agent.specialists import (
     Subsystem,
     UncertaintyBounds,
 )
+
+
+class _HasAnalyze(Protocol):
+    def analyze(self, request: ModuleRequest) -> ModuleResponse: ...
+
+
+def _timed_analyze(specialist: _HasAnalyze, request: ModuleRequest) -> tuple[ModuleResponse, float]:
+    """Call specialist.analyze and return (response, latency_ms)."""
+    t0 = perf_counter()
+    response = specialist.analyze(request)
+    return response, (perf_counter() - t0) * 1000.0
+
 
 # Built-in per-conflict knob adjustments: (isru_delta, crew_delta, dust_delta).
 # Overridable via PlannerSettings.conflict_knob_overrides.
@@ -304,7 +319,10 @@ class CentralPlanner:
         goal: MissionGoal,
         evidence: tuple[EvidenceReference, ...],
         isru_reduction: float,
-    ) -> tuple[ModuleResponse, ModuleResponse, ModuleResponse, ModuleResponse]:
+    ) -> tuple[
+        tuple[ModuleResponse, ModuleResponse, ModuleResponse, ModuleResponse],
+        tuple[SpecialistTiming, ...],
+    ]:
         eclss_request = self._eclss_request(goal, evidence)
         isru_request = self._isru_request(goal, evidence, reduction=isru_reduction)
         thermal_request = self._thermal_request(goal, evidence)
@@ -313,13 +331,13 @@ class CentralPlanner:
         # Power depends on the ECLSS + ISRU outputs (critical_load_kw) so it
         # must wait for the first wave to complete.
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            eclss_fut = pool.submit(self.eclss.analyze, eclss_request)
-            isru_fut = pool.submit(self.isru.analyze, isru_request)
-            thermal_fut = pool.submit(self.thermal.analyze, thermal_request)
+            eclss_fut = pool.submit(_timed_analyze, self.eclss, eclss_request)
+            isru_fut = pool.submit(_timed_analyze, self.isru, isru_request)
+            thermal_fut = pool.submit(_timed_analyze, self.thermal, thermal_request)
 
-            eclss_response = eclss_fut.result()
-            isru_response = isru_fut.result()
-            thermal_response = thermal_fut.result()
+            eclss_response, eclss_ms = eclss_fut.result()
+            isru_response, isru_ms = isru_fut.result()
+            thermal_response, thermal_ms = thermal_fut.result()
 
         critical_load_kw = (
             eclss_response.get_metric("eclss_power_demand_kw").value.mean
@@ -327,9 +345,31 @@ class CentralPlanner:
         )
 
         power_request = self._power_request(goal, evidence, critical_load_kw)
-        power_response = self.power.analyze(power_request)
+        power_response, power_ms = _timed_analyze(self.power, power_request)
 
-        return eclss_response, isru_response, power_response, thermal_response
+        timings: tuple[SpecialistTiming, ...] = (
+            SpecialistTiming(
+                subsystem_name=eclss_response.subsystem.value,
+                latency_ms=eclss_ms,
+                gate_accepted=eclss_response.gate.accepted,
+            ),
+            SpecialistTiming(
+                subsystem_name=isru_response.subsystem.value,
+                latency_ms=isru_ms,
+                gate_accepted=isru_response.gate.accepted,
+            ),
+            SpecialistTiming(
+                subsystem_name=power_response.subsystem.value,
+                latency_ms=power_ms,
+                gate_accepted=power_response.gate.accepted,
+            ),
+            SpecialistTiming(
+                subsystem_name=thermal_response.subsystem.value,
+                latency_ms=thermal_ms,
+                gate_accepted=thermal_response.gate.accepted,
+            ),
+        )
+        return (eclss_response, isru_response, power_response, thermal_response), timings
 
     def _conflict_aware_fallback(
         self,
@@ -479,10 +519,16 @@ class CentralPlanner:
         isru_response: ModuleResponse
         power_response: ModuleResponse
         thermal_response: ModuleResponse
+        last_timings: tuple[SpecialistTiming, ...] = ()
 
         conflicts: tuple[CrossDomainConflict, ...] = ()
         for attempt in range(self.settings.max_replan_attempts + 1):
-            eclss_response, isru_response, power_response, thermal_response = self._run_modules(
+            (
+                eclss_response,
+                isru_response,
+                power_response,
+                thermal_response,
+            ), last_timings = self._run_modules(
                 goal,
                 evidence,
                 isru_reduction=current_reduction,
@@ -513,4 +559,5 @@ class CentralPlanner:
             subsystem_responses=(eclss_response, isru_response, power_response, thermal_response),
             conflicts=conflicts,
             replan_events=tuple(replan_events),
+            specialist_timings=last_timings,
         )

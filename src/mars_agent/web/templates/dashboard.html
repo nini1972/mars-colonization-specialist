@@ -95,4 +95,8 @@
     <p class="muted">Submit a correlation ID to inspect the chain.</p>
   </div>
 </section>
+
+<article class="card" id="agents-panel" hx-get="/dashboard/fragments/agents" hx-trigger="load, every 30s" hx-swap="innerHTML">
+  <div class="skeleton">Loading agent health...</div>
+</article>
 {% endblock %}

@@ -68,6 +68,10 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .outcome-success { background: #e3f3e1; border-color: #a8cc9f; color: #295629; }
 .outcome-failure { background: #ffe5db; border-color: #e7ab94; color: #7b2e0f; }
 .outcome-started { background: #e7efff; border-color: #b0c2f0; color: #22406d; }
+/* Status dots for agent health panel */
+.status-dot { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
+.status-pass { background: #2f7f5f; }
+.status-fail { background: #b65a2a; }
 .modal-backdrop {
   position: fixed;
   inset: 0;

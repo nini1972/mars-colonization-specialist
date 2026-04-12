@@ -20,6 +20,7 @@ from mars_agent.mcp.server import (
     telemetry_dashboard_snapshot,
     telemetry_invocation_detail,
     telemetry_list_events,
+    telemetry_specialist_metrics,
 )
 
 _MCP_HTTP_APP = mcp.streamable_http_app()
@@ -411,6 +412,30 @@ def _chain_integrity_issues(
     return issues
 
 
+def _build_agents_panel() -> list[dict[str, object]]:
+    """Build per-specialist health rows from live metric snapshot."""
+    raw = telemetry_specialist_metrics()
+    rows: list[dict[str, object]] = []
+    for tool_name, metrics in sorted(raw.items()):
+        subsystem = tool_name[len("specialist."):]
+        display_name = subsystem.replace("_", " ").title()
+        calls = int(metrics.get("calls", 0.0))
+        total_latency = metrics.get("total_latency_ms", 0.0)
+        avg_latency = round(total_latency / calls, 1) if calls > 0 else 0.0
+        rows.append(
+            {
+                "subsystem": subsystem,
+                "display_name": display_name,
+                "calls": calls,
+                "avg_latency_ms": avg_latency,
+                "gate_pass": int(metrics.get("gate_pass", 0.0)),
+                "gate_fail": int(metrics.get("gate_fail", 0.0)),
+                "last_gate_accepted": bool(metrics.get("last_gate_accepted", 0.0)),
+            }
+        )
+    return rows
+
+
 def _build_dag_nodes(
     present: set[str],
     ordered: list[dict[str, object]],
@@ -614,6 +639,19 @@ def replay_fragment(
         context={
             "replay": payload["replay_degraded_panel"],
             "degraded": bool(replay.get("persistence_degraded", False)),
+        },
+    )
+
+
+@app.get("/dashboard/fragments/agents", response_class=HTMLResponse)
+def agents_fragment(request: Request) -> HTMLResponse:
+    rows = _build_agents_panel()
+    return templates.TemplateResponse(
+        request=request,
+        name="fragments/agents.html",
+        context={
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "agents": rows,
         },
     )
 

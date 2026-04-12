@@ -72,7 +72,7 @@ def _strip_created_at(value: object) -> object:
     if isinstance(value, dict):
         normalized: dict[str, object] = {}
         for key, item in value.items():
-            if key == "created_at":
+            if key in ("created_at", "specialist_timings"):
                 continue
             normalized[key] = _strip_created_at(item)
         return normalized

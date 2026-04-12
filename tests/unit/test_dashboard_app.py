@@ -683,3 +683,80 @@ def test_mcp_http_endpoint_is_mounted() -> None:
     ]
     assert "/mcp" in mounted_paths
 
+
+# ---------------------------------------------------------------------------
+# Track E — Agent Health Panel
+# ---------------------------------------------------------------------------
+
+
+def _patch_specialist_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    data: dict[str, dict[str, float]] | None = None,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_specialist_metrics",
+        lambda: data if data is not None else {},
+    )
+
+
+def test_agents_fragment_returns_200(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_specialist_metrics(monkeypatch)
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+
+
+def test_agents_fragment_has_data_fragment(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_specialist_metrics(monkeypatch)
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert 'data-fragment="agents"' in response.text
+
+
+def test_agents_empty_state_when_no_metrics(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_specialist_metrics(monkeypatch, data={})
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "No specialist metrics recorded yet" in response.text
+
+
+def test_agents_fragment_shows_eclss_when_data_present(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.eclss": {
+                "calls": 2.0,
+                "total_latency_ms": 40.0,
+                "gate_pass": 2.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 1.0,
+                "last_latency_ms": 18.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "Eclss" in response.text
+
+
+def test_agents_fragment_required_keys_present(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_specialist_metrics(monkeypatch)
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert 'data-fragment-required="agents,ui_schema_version"' in response.text
+

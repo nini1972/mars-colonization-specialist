@@ -38,7 +38,7 @@ from mars_agent.mcp.persistence import (
 )
 from mars_agent.mcp.telemetry import TelemetryQueryService
 from mars_agent.orchestration import MissionGoal
-from mars_agent.orchestration.models import PlanResult
+from mars_agent.orchestration.models import PlanResult, SpecialistTiming
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.simulation import SimulationPipeline
 from mars_agent.simulation.pipeline import SimulationReport
@@ -60,6 +60,14 @@ _DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
 _DEFAULT_PERSISTENCE_BACKEND = "memory"
 _DEFAULT_PERSISTENCE_SQLITE_PATH = ".mars_mcp_runtime.sqlite3"
 _TOOL_METRIC_KEYS = ("calls", "successes", "failures", "auth_failures", "total_latency_ms")
+_SPECIALIST_METRIC_KEYS = (
+    "calls",
+    "total_latency_ms",
+    "gate_pass",
+    "gate_fail",
+    "last_gate_accepted",
+    "last_latency_ms",
+)
 _ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark", "telemetry"}
 _TOOL_PERMISSION_BY_NAME = {
     "mars.plan": "plan",
@@ -479,6 +487,11 @@ def telemetry_dashboard_snapshot(*, page_size: int = 20) -> Mapping[str, object]
     )
 
 
+def telemetry_specialist_metrics() -> dict[str, dict[str, float]]:
+    """Return a live snapshot of per-specialist metrics keyed by 'specialist.<name>'."""
+    return {k: dict(v) for k, v in deepcopy(_TOOL_METRICS).items() if k.startswith("specialist.")}
+
+
 def _record_metric(
     tool_name: str,
     *,
@@ -495,6 +508,21 @@ def _record_metric(
         bucket["failures"] += 1.0
         if auth_failure:
             bucket["auth_failures"] += 1.0
+    _persist_runtime_snapshot_best_effort()
+
+
+def _record_specialist_metric(timing: SpecialistTiming) -> None:
+    tool_name = f"specialist.{timing.subsystem_name}"
+    bucket = _TOOL_METRICS.setdefault(tool_name, {key: 0.0 for key in _SPECIALIST_METRIC_KEYS})
+    bucket["calls"] += 1.0
+    bucket["total_latency_ms"] += timing.latency_ms
+    if timing.gate_accepted:
+        bucket["gate_pass"] += 1.0
+        bucket["last_gate_accepted"] = 1.0
+    else:
+        bucket["gate_fail"] += 1.0
+        bucket["last_gate_accepted"] = 0.0
+    bucket["last_latency_ms"] = timing.latency_ms
     _persist_runtime_snapshot_best_effort()
 
 
@@ -833,6 +861,8 @@ async def _invoke_runtime_tool(
             _compute_plan,
             timeout_seconds=_configured_tool_timeout_seconds(),
         )
+        for timing in plan.specialist_timings:
+            _record_specialist_metric(timing)
         plan_id = f"plan-{len(_adapter._plans) + 1:04d}"
         _adapter._plans[plan_id] = plan
         return {

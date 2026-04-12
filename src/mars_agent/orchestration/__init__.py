@@ -12,6 +12,7 @@ from mars_agent.orchestration.models import (
     PlanResult,
     ReadinessSignals,
     ReplanEvent,
+    SpecialistTiming,
 )
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
@@ -36,4 +37,5 @@ __all__ = [
     "PlanningContext",
     "ReadinessSignals",
     "ReplanEvent",
+    "SpecialistTiming",
 ]

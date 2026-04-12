@@ -1,0 +1,40 @@
+<div class="fragment" data-fragment="agents" data-fragment-required="agents,ui_schema_version" data-fragment-allowed="agents,ui_schema_version">
+  <header class="card-head">
+    <h2>Agent Health</h2>
+    <span class="pill">{{ agents | length }} specialist(s)</span>
+  </header>
+
+  {% if not agents %}
+  <p class="muted">No specialist metrics recorded yet. Run <code>mars.plan</code> to populate.</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Subsystem</th>
+        <th>Calls</th>
+        <th>Avg Latency (ms)</th>
+        <th>Gate Pass</th>
+        <th>Gate Fail</th>
+        <th>Last Outcome</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in agents %}
+      <tr>
+        <td>{{ row.display_name }}</td>
+        <td>{{ row.calls }}</td>
+        <td>{{ row.avg_latency_ms }}</td>
+        <td>{{ row.gate_pass }}</td>
+        <td>{{ row.gate_fail }}</td>
+        <td>
+          <span class="status-dot {% if row.last_gate_accepted %}status-pass{% else %}status-fail{% endif %}"
+                aria-label="{% if row.last_gate_accepted %}pass{% else %}fail{% endif %}">
+          </span>
+          {% if row.last_gate_accepted %}pass{% else %}fail{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>

@@ -89,7 +89,7 @@ def _normalize_payload(value: object) -> object:
         return {
             key: _normalize_payload(item)
             for key, item in value.items()
-            if key != "created_at"
+            if key not in {"created_at", "specialist_timings"}
         }
     if isinstance(value, list):
         return [_normalize_payload(item) for item in value]
