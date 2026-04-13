@@ -4,6 +4,8 @@ src/mars_agent/__init__.py
 src/mars_agent/config.py
 src/mars_agent/dashboard_app.py
 src/mars_agent/randomness.py
+src/mars_agent/dashboard/__init__.py
+src/mars_agent/dashboard/__main__.py
 src/mars_agent/governance/__init__.py
 src/mars_agent/governance/audit.py
 src/mars_agent/governance/benchmark.py
@@ -26,6 +28,7 @@ src/mars_agent/mcp/telemetry.py
 src/mars_agent/orchestration/__init__.py
 src/mars_agent/orchestration/coupling.py
 src/mars_agent/orchestration/models.py
+src/mars_agent/orchestration/negotiation_store.py
 src/mars_agent/orchestration/negotiator.py
 src/mars_agent/orchestration/planner.py
 src/mars_agent/orchestration/state_machine.py
@@ -48,8 +51,11 @@ src/mars_agent/specialists/isru.py
 src/mars_agent/specialists/power.py
 src/mars_agent/web/__init__.py
 src/mars_agent/web/static/css/dashboard.css
+src/mars_agent/web/static/js/alpinejs.min.js
+src/mars_agent/web/static/js/htmx.min.js
 src/mars_agent/web/templates/base.html
 src/mars_agent/web/templates/dashboard.html
+src/mars_agent/web/templates/fragments/agents.html
 src/mars_agent/web/templates/fragments/correlation.html
 src/mars_agent/web/templates/fragments/invocation_detail.html
 src/mars_agent/web/templates/fragments/invocations.html

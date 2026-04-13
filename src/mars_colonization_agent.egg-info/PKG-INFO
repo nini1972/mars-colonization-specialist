@@ -10,6 +10,7 @@ Requires-Dist: jinja2>=3.1.4
 Requires-Dist: mcp>=1.0
 Requires-Dist: pydantic>=2.0
 Requires-Dist: openai>=1.0.0
+Requires-Dist: uvicorn>=0.30.0
 Provides-Extra: dev
 Requires-Dist: httpx>=0.27.0; extra == "dev"
 Requires-Dist: pytest>=8.2.0; extra == "dev"
@@ -27,6 +28,63 @@ Phases 0-7 baseline for deterministic, testable implementation.
 ./scripts/setup.ps1
 ./scripts/check.ps1
 ```
+## Start dashboard
+
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+
+If you want to use a different port:
+
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload --port 8080
+
+navigate to:
+http://localhost:8000/dashboard
+
+
+Remark: If you see the "persistence degraded" warning in the logs, it means the dashboard is running with the in-memory persistence backend instead of SQLite. This is expected if you haven't set the `MARS_MCP_PERSISTENCE_BACKEND` environment variable to `sqlite`. The dashboard will still function, but any state will be lost on restart.
+Fix: set the env var before starting the dashboard:
+$env:MARS_MCP_PERSISTENCE_BACKEND = "sqlite"
+.venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+
+Or permanently in your shell session:
+$env:MARS_MCP_PERSISTENCE_SQLITE_PATH = ".\.mars_mcp_runtime.sqlite3"
+$env:MARS_MCP_PERSISTENCE_BACKEND    = "sqlite"
+
+When using Docker/docker-compose, the env var is already defaulted to sqlite in docker-compose.yml and docker-run.ps1 — so the message only appears in the plain uvicorn dev workflow where no env vars are set.
+
+## Start Docker-compose
+Option A — docker-compose (recommended, handles build + run together):
+
+# From the repo root — builds image and starts the dashboard
+docker compose up --build
+
+# Or detached (background):
+docker compose up --build -d
+
+Then navigate to http://localhost:8000/dashboard.
+To stop:docker compose down
+to stop and remove Sqlite volume:docker compose down -v
+
+Option B — PowerShell scripts (build once, run separately):
+
+# 1. Build the image
+./scripts/docker-build.ps1
+
+# 2. Run the container (foreground)
+./scripts/docker-run.ps1
+
+# Run detached on a different port:
+./scripts/docker-run.ps1 -Port 8080 -Detach
+
+Then navigate to http://localhost:8000/dashboard. To stop the detached container:docker stop mars_dashboard
+
+Then rebuild:
+docker compose up --build
+# or
+./scripts/docker-build.ps1
+
+SQLite persistence is auto-configured in both paths — the container stores the .sqlite3 file in the mars_data named Docker volume at /data/mars_mcp_runtime.sqlite3. The "persistence degraded" warning will not appear when running via Docker.
+
+Prerequisites: Docker Desktop must be running before either command.
 
 ## Progress
 
@@ -50,11 +108,17 @@ Phases 0-7 baseline for deterministic, testable implementation.
   - Option B ✅ — Habitat Thermodynamics Specialist: `HabitatThermodynamicsSpecialist` models thermal power demand and habitat temperature; coupled into `CouplingChecker` as a fourth power load; planner wired with phase-dependent thermal requests.
 - Phase 10a ✅ — LLM-driven multi-agent negotiation (`MultiAgentNegotiator`): Chief Engineer persona negotiates ISRU feedstock reductions via OpenAI Chat Completions; fully opt-in via `MARS_LLM_ORCHESTRATOR_ENABLED` + `OPENAI_API_KEY`; deterministic fallback on any failure path.
 - Phase 10b ✅ — Multi-turn negotiation history: `NegotiationRound` dataclass accumulates accepted/rejected rounds; each iteration passes prior rounds to the LLM for context; `_build_messages()` injects a structured history section; mock-client unit tests added (101 tests passing).
+  - Option 1 ✅ — Expanded negotiation variables: `NegotiationResult` gains `crew_reduction` (int 0–5) and `dust_degradation_adjustment` (float 0.0–0.1); `NegotiationRound` records both per round; `_build_messages()` advertises three knobs to the LLM; `_handle_replan()` applies changes via `dataclasses.replace()` on `MissionGoal`; `plan()` threads the updated goal forward each replan iteration (104 tests passing).
+- Option D ✅ — Cloud-ready infrastructure: `Dockerfile` (single image, non-root `mars` user, `/data` volume mount); `.dockerignore`; `docker-compose.yml` with named `mars_data` volume and env-driven config; `GET /health` liveness + `GET /ready` readiness probes added to `dashboard_app.py`; `python -m mars_agent.dashboard` entry point via new `src/mars_agent/dashboard/__main__.py`; `uvicorn` added as core dependency; `scripts/docker-build.ps1` + `scripts/docker-run.ps1` (113 tests passing).
+- Track A ✅ — Parallel specialist execution: ECLSS, ISRU, and HabitatThermodynamics run concurrently via `ThreadPoolExecutor(max_workers=3)`; PowerSpecialist runs after (depends on ECLSS + ISRU outputs); no public API changes (112 tests passing). See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
+- Track B ✅ — Smarter negotiation fallback: replaced fixed +20% ISRU-only fallback with `_conflict_aware_fallback()` driven by `_CONFLICT_KNOB_TABLE`; per-conflict knobs (ISRU Δ, crew Δ, dust Δ) combined via `max()` across active conflicts; `PlannerSettings.conflict_knob_overrides` allows per-deployment override; 4 new unit tests (116 tests passing). See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
+- Track D ✅ — Persistent negotiation memory: `NegotiationMemoryStore` fingerprints each conflict scenario (SHA-256 of phase + crew + solar_kw + battery_kwh + dust + hours_without_sun + sorted conflict IDs) and caches accepted outcomes in-memory or SQLite; `CentralPlanner._handle_replan()` checks the cache first — cache hits replay stored deltas with a `[memory hit][llm|fallback]` rationale prefix and increment `hit_count`; `PlannerSettings.negotiation_store_path` enables SQLite persistence; thread-safe with `threading.Lock()`; `is_fallback` distinguishes LLM-accepted vs deterministic-fallback outcomes; schema version guard on DB open; 9 new unit tests (125 tests passing). See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
+- Track E ✅ — Agent health panel in dashboard: `SpecialistTiming` frozen dataclass captures `latency_ms` and `gate_accepted` per specialist inside `_run_modules()` via `_timed_analyze()` helper; timings flow through `PlanResult.specialist_timings` → server `_record_specialist_metric()` → `_TOOL_METRICS` at key `"specialist.<name>"` (6 float counters: calls, total_latency_ms, gate_pass, gate_fail, last_gate_accepted, last_latency_ms); auto-persisted to existing SQLite `tool_metrics` table; new `/dashboard/fragments/agents` route polls every 30 s and renders a 6-column table (subsystem · calls · avg latency · gate pass · gate fail · last outcome status dot); CSS `.status-dot/.status-pass/.status-fail` added; 8 new tests (3 timing + 5 dashboard panel); 133 tests passing. See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
 
 ## Next
 
-- Phase 10b remaining options: expand negotiation variables beyond ISRU feedstock; add `AsyncOpenAI` support.
-- Phase 10c/10d: Option D — cloud infrastructure (Dockerfile, health endpoints, deployment scripts).
+- Multi-agent architecture improvements (Track C) — see [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
+- Phase 10b — Add `AsyncOpenAI` async negotiation support (open for future phase).
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
 ## MCP Error Payload Contract
@@ -175,4 +239,20 @@ The MCP server now emits structured observability signals while preserving the e
 - Unit tests exercise the LLM path via `MultiAgentNegotiator.__new__` + mock OpenAI client injection (no live API key required).
 
 
+
+### Multi-agent architecture
+
+> Full analysis and improvement backlog: [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13)
+
+**Current architecture:** 4 domain specialists (ECLSS, Power, ISRU, HabitatThermodynamics) + 5 orchestrators (CentralPlanner, MultiAgentNegotiator, CouplingChecker, MissionPhaseStateMachine, GovernanceGate). Communication is entirely synchronous direct function calls.
+
+**Improvement tracks:**
+
+| Track | Description | Status |
+|-------|-------------|--------|
+| A | Parallel specialist execution — ECLSS, ISRU, Thermal run concurrently via `ThreadPoolExecutor`; Power waits on their outputs | ✅ Done (112 tests passing) |
+| B | Smarter negotiation fallback — conflict-aware knob selection instead of fixed 20% ISRU reduction | Backlog |
+| C | Specialist capability protocol — `capabilities()` method on each specialist so the negotiator can query trade-off preferences | Backlog |
+| D | Persistent negotiation memory — resolved conflict patterns persisted to SQLite for cross-mission reuse | Backlog |
+| E | Agent health panel in dashboard — per-specialist call count, avg latency, and last outcome fragment | Backlog |
 
