@@ -107,16 +107,25 @@ class MultiAgentNegotiator:
         )
 
         if capabilities:
+            supported_knobs = {
+                "isru_reduction_fraction",
+                "crew_reduction",
+                "dust_degradation_adjustment",
+            }
             lines = ["\n\nSpecialist preferences (preferred step sizes per knob):"]
             for cap in capabilities:
                 for knob in cap.tradeoff_knobs:
-                    if knob.preferred_delta > 0.0:
+                    if (
+                        knob.name in supported_knobs
+                        and knob.preferred_delta > 0.0
+                    ):
                         lines.append(
                             f"  [{cap.subsystem.upper()}] {knob.name}: "
                             f"preferred_delta={knob.preferred_delta} {knob.unit}, "
                             f"range [{knob.min_value}, {knob.max_value}] — {knob.description}"
                         )
-            system_prompt += "\n".join(lines)
+            if len(lines) > 1:
+                system_prompt += "\n".join(lines)
 
         history_section = ""
         if history:
