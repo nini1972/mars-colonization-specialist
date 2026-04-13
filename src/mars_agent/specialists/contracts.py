@@ -36,7 +36,7 @@ class TradeoffKnob:
 class SpecialistCapability:
     """Describes what a specialist accepts, produces, and can trade off."""
 
-    subsystem: "Subsystem"
+    subsystem: Subsystem
     accepts_inputs: tuple[str, ...]
     produces_metrics: tuple[str, ...]
     tradeoff_knobs: tuple[TradeoffKnob, ...]

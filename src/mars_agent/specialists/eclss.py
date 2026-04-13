@@ -62,7 +62,9 @@ class ECLSSSpecialist:
                 ),
                 TradeoffKnob(
                     name="recycle_efficiency",
-                    description="Increase water/O₂ recycling efficiency to reduce ECLSS power demand",
+                    description=(
+                        "Increase water/O₂ recycling efficiency to reduce ECLSS power demand"
+                    ),
                     min_value=0.75,
                     max_value=0.98,
                     preferred_delta=0.02,

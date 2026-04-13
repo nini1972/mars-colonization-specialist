@@ -382,19 +382,13 @@ class CentralPlanner:
         crew/dust change.
         """
         # Build per-knob preferred deltas from the registry's live capabilities.
+        # Only the ISRU knob is used in the unknown-conflict fallback path;
+        # crew and dust deltas are governed by the static conflict-ID table entries.
         cap_isru_delta = 0.0
-        cap_crew_delta = 0
-        cap_dust_delta = 0.0
         for cap in self.registry.all_capabilities():
             for knob in cap.tradeoff_knobs:
                 if knob.name == "isru_reduction_fraction":
                     cap_isru_delta = max(cap_isru_delta, knob.preferred_delta)
-                elif knob.name == "crew_reduction":
-                    # crew_reduction preferred_delta is always a whole number of
-                    # crew members (e.g. 1.0), so the int() cast is always exact.
-                    cap_crew_delta = max(cap_crew_delta, int(knob.preferred_delta))
-                elif knob.name == "dust_degradation_adjustment":
-                    cap_dust_delta = max(cap_dust_delta, knob.preferred_delta)
 
         # Override/supplement with the static conflict-ID table (and any per-deployment
         # overrides from PlannerSettings) so that conflict-specific logic is preserved.

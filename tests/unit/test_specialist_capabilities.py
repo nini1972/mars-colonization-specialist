@@ -17,7 +17,6 @@ from mars_agent.orchestration.models import (
     MitigationOption,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator
-from mars_agent.orchestration.registry import _HasCapabilitiesAndAnalyze
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import (
     ECLSSSpecialist,
@@ -28,7 +27,6 @@ from mars_agent.specialists import (
     Subsystem,
     TradeoffKnob,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -236,7 +234,7 @@ def test_registry_get_raises_key_error_on_unknown_subsystem() -> None:
 def test_registry_get_returns_correct_specialist() -> None:
     registry = SpecialistRegistry.default()
     specialist = registry.get(Subsystem.ISRU)
-    cap = specialist.capabilities()  # type: ignore[union-attr]
+    cap = specialist.capabilities()
     assert cap.subsystem is Subsystem.ISRU
 
 

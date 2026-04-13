@@ -5,8 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from mars_agent.specialists.contracts import SpecialistCapability, Subsystem
-from mars_agent.specialists.contracts import ModuleRequest, ModuleResponse
+from mars_agent.specialists.contracts import (
+    ModuleRequest,
+    ModuleResponse,
+    SpecialistCapability,
+    Subsystem,
+)
 
 
 class _HasCapabilitiesAndAnalyze(Protocol):
