@@ -27,16 +27,13 @@ from mars_agent.orchestration.negotiation_store import (
     now_utc_iso,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
+from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.orchestration.state_machine import MissionPhaseStateMachine
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import (
-    ECLSSSpecialist,
-    HabitatThermodynamicsSpecialist,
-    ISRUSpecialist,
     ModuleInput,
     ModuleRequest,
     ModuleResponse,
-    PowerSpecialist,
     Subsystem,
     UncertaintyBounds,
 )
@@ -132,12 +129,7 @@ def _power_inputs(goal: MissionGoal, critical_load_kw: float) -> tuple[ModuleInp
 class CentralPlanner:
     """Orchestrates subsystem analysis and resolves cross-domain couplings."""
 
-    eclss: ECLSSSpecialist = field(default_factory=ECLSSSpecialist)
-    isru: ISRUSpecialist = field(default_factory=ISRUSpecialist)
-    power: PowerSpecialist = field(default_factory=PowerSpecialist)
-    thermal: HabitatThermodynamicsSpecialist = field(
-        default_factory=HabitatThermodynamicsSpecialist
-    )
+    registry: SpecialistRegistry = field(default_factory=SpecialistRegistry.default)
     coupling_checker: CouplingChecker = field(default_factory=CouplingChecker)
     state_machine: MissionPhaseStateMachine = field(default_factory=MissionPhaseStateMachine)
     settings: PlannerSettings = field(default_factory=PlannerSettings)
@@ -330,10 +322,15 @@ class CentralPlanner:
         # ECLSS, ISRU, and Thermal are independent — run them concurrently.
         # Power depends on the ECLSS + ISRU outputs (critical_load_kw) so it
         # must wait for the first wave to complete.
+        eclss_specialist = self.registry.get(Subsystem.ECLSS)
+        isru_specialist = self.registry.get(Subsystem.ISRU)
+        thermal_specialist = self.registry.get(Subsystem.HABITAT_THERMODYNAMICS)
+        power_specialist = self.registry.get(Subsystem.POWER)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            eclss_fut = pool.submit(_timed_analyze, self.eclss, eclss_request)
-            isru_fut = pool.submit(_timed_analyze, self.isru, isru_request)
-            thermal_fut = pool.submit(_timed_analyze, self.thermal, thermal_request)
+            eclss_fut = pool.submit(_timed_analyze, eclss_specialist, eclss_request)
+            isru_fut = pool.submit(_timed_analyze, isru_specialist, isru_request)
+            thermal_fut = pool.submit(_timed_analyze, thermal_specialist, thermal_request)
 
             eclss_response, eclss_ms = eclss_fut.result()
             isru_response, isru_ms = isru_fut.result()
@@ -345,7 +342,7 @@ class CentralPlanner:
         )
 
         power_request = self._power_request(goal, evidence, critical_load_kw)
-        power_response, power_ms = _timed_analyze(self.power, power_request)
+        power_response, power_ms = _timed_analyze(power_specialist, power_request)
 
         timings: tuple[SpecialistTiming, ...] = (
             SpecialistTiming(
@@ -378,9 +375,23 @@ class CentralPlanner:
     ) -> tuple[float, int, float, str]:
         """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
 
-        Deltas are combined via max() per knob across all active conflict IDs.
-        Unknown IDs fall back to replan_feedstock_reduction with no crew/dust change.
+        Knob deltas are derived first from the live specialist registry (capability-driven),
+        then supplemented by the static ``_CONFLICT_KNOB_TABLE`` for conflict IDs that map
+        to specific subsystem actions.  Deltas are combined via max() per knob across all
+        active conflict IDs.  Unknown IDs fall back to replan_feedstock_reduction with no
+        crew/dust change.
         """
+        # Build per-knob preferred deltas from the registry's live capabilities.
+        # Only the ISRU knob is used in the unknown-conflict fallback path;
+        # crew and dust deltas are governed by the static conflict-ID table entries.
+        cap_isru_delta = 0.0
+        for cap in self.registry.all_capabilities():
+            for knob in cap.tradeoff_knobs:
+                if knob.name == "isru_reduction_fraction":
+                    cap_isru_delta = max(cap_isru_delta, knob.preferred_delta)
+
+        # Override/supplement with the static conflict-ID table (and any per-deployment
+        # overrides from PlannerSettings) so that conflict-specific logic is preserved.
         table: dict[str, tuple[float, int, float]] = {
             **_CONFLICT_KNOB_TABLE,
             **self.settings.conflict_knob_overrides,
@@ -391,9 +402,15 @@ class CentralPlanner:
         named: list[str] = []
         for conflict in conflicts:
             cid = conflict.conflict_id
-            d_isru, d_crew, d_dust = table.get(
-                cid, (self.settings.replan_feedstock_reduction, 0, 0.0)
-            )
+            if cid in table:
+                d_isru, d_crew, d_dust = table[cid]
+            else:
+                # For unknown conflicts apply only ISRU reduction (safest default).
+                # Respect the larger of the capability preferred_delta and the
+                # configured replan_feedstock_reduction.
+                d_isru = max(cap_isru_delta, self.settings.replan_feedstock_reduction)
+                d_crew = 0
+                d_dust = 0.0
             isru_delta = max(isru_delta, d_isru)
             crew_delta = max(crew_delta, d_crew)
             dust_delta = max(dust_delta, d_dust)
@@ -445,6 +462,7 @@ class CentralPlanner:
                     conflicts=conflicts,
                     current_reduction=current_reduction,
                     history=history,
+                    capabilities=self.registry.all_capabilities(),
                 )
             )
             is_fallback: bool

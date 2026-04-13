@@ -8,6 +8,40 @@ from enum import StrEnum
 from mars_agent.reasoning.models import DecisionRecord, EvidenceReference, GateResult
 
 
+@dataclass(frozen=True, slots=True)
+class TradeoffKnob:
+    """Describes one adjustable parameter that a specialist is willing to negotiate on."""
+
+    name: str
+    description: str
+    min_value: float
+    max_value: float
+    preferred_delta: float
+    unit: str
+
+    def __post_init__(self) -> None:
+        if self.min_value > self.max_value:
+            raise ValueError(
+                f"TradeoffKnob '{self.name}': min_value must be <= max_value "
+                f"({self.min_value} <= {self.max_value})"
+            )
+        if self.preferred_delta < 0.0:
+            raise ValueError(
+                f"TradeoffKnob '{self.name}': preferred_delta must be non-negative "
+                f"(got {self.preferred_delta})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SpecialistCapability:
+    """Describes what a specialist accepts, produces, and can trade off."""
+
+    subsystem: Subsystem
+    accepts_inputs: tuple[str, ...]
+    produces_metrics: tuple[str, ...]
+    tradeoff_knobs: tuple[TradeoffKnob, ...]
+
+
 class Subsystem(StrEnum):
     """Supported subsystem identifiers for specialist modules."""
 

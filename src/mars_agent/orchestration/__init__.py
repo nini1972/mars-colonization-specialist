@@ -19,6 +19,7 @@ from mars_agent.orchestration.negotiation_store import (
     NegotiationOutcome,
 )
 from mars_agent.orchestration.planner import CentralPlanner
+from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.orchestration.state_machine import MissionPhaseStateMachine
 
 __all__ = [
@@ -37,5 +38,6 @@ __all__ = [
     "PlanningContext",
     "ReadinessSignals",
     "ReplanEvent",
+    "SpecialistRegistry",
     "SpecialistTiming",
 ]

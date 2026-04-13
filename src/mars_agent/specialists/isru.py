@@ -19,7 +19,9 @@ from mars_agent.specialists.contracts import (
     ModuleMetric,
     ModuleRequest,
     ModuleResponse,
+    SpecialistCapability,
     Subsystem,
+    TradeoffKnob,
     UncertaintyBounds,
 )
 
@@ -31,6 +33,42 @@ class ISRUSpecialist:
     forecaster: GaussianMonteCarloForecaster = field(
         default_factory=lambda: GaussianMonteCarloForecaster(seed=99)
     )
+
+    def capabilities(self) -> SpecialistCapability:
+        """Return this specialist's self-description for negotiation."""
+        return SpecialistCapability(
+            subsystem=Subsystem.ISRU,
+            accepts_inputs=(
+                "regolith_feed_kg_day",
+                "ice_grade_fraction",
+                "reactor_efficiency",
+                "electrolysis_kwh_per_kg_o2",
+                "available_power_kw",
+            ),
+            produces_metrics=(
+                "oxygen_production_kg_day",
+                "water_extraction_kg_day",
+                "isru_power_demand_kw",
+            ),
+            tradeoff_knobs=(
+                TradeoffKnob(
+                    name="isru_reduction_fraction",
+                    description="Reduce ISRU regolith feedstock throughput to lower power demand",
+                    min_value=0.0,
+                    max_value=0.8,
+                    preferred_delta=0.05,
+                    unit="fraction",
+                ),
+                TradeoffKnob(
+                    name="reactor_efficiency",
+                    description="Adjust reactor efficiency target (lower = less power consumed)",
+                    min_value=0.4,
+                    max_value=0.95,
+                    preferred_delta=0.02,
+                    unit="ratio",
+                ),
+            ),
+        )
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.ISRU:

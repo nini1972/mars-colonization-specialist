@@ -19,7 +19,9 @@ from mars_agent.specialists.contracts import (
     ModuleMetric,
     ModuleRequest,
     ModuleResponse,
+    SpecialistCapability,
     Subsystem,
+    TradeoffKnob,
     UncertaintyBounds,
 )
 
@@ -210,6 +212,37 @@ class HabitatThermodynamicsSpecialist:
     forecaster: GaussianMonteCarloForecaster = field(
         default_factory=GaussianMonteCarloForecaster
     )
+
+    def capabilities(self) -> SpecialistCapability:
+        """Return this specialist's self-description for negotiation."""
+        return SpecialistCapability(
+            subsystem=Subsystem.HABITAT_THERMODYNAMICS,
+            accepts_inputs=(
+                "crew_count",
+                "solar_flux_w_m2",
+                "habitat_area_m2",
+                "insulation_r_value",
+                "thermal_power_budget_kw",
+            ),
+            produces_metrics=(
+                "internal_temp_c",
+                "thermal_power_demand_kw",
+                "temp_regulation_efficiency",
+            ),
+            tradeoff_knobs=(
+                TradeoffKnob(
+                    name="thermal_power_budget_reduction",
+                    description=(
+                        "Reduce the thermal power budget allocation to free capacity for "
+                        "other subsystems"
+                    ),
+                    min_value=0.0,
+                    max_value=20.0,
+                    preferred_delta=2.0,
+                    unit="kW",
+                ),
+            ),
+        )
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.HABITAT_THERMODYNAMICS:
