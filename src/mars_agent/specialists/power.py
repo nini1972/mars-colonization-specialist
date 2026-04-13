@@ -61,16 +61,6 @@ class PowerSpecialist:
                     preferred_delta=0.02,
                     unit="fraction",
                 ),
-                TradeoffKnob(
-                    name="solar_generation_kw",
-                    description=(
-                        "Read-only: rated solar panel capacity (not directly negotiable)"
-                    ),
-                    min_value=0.0,
-                    max_value=0.0,
-                    preferred_delta=0.0,
-                    unit="kW",
-                ),
             ),
         )
 
