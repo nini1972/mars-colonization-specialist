@@ -16,6 +16,7 @@ except ImportError:
     ChatCompletionMessageParam = object  # type: ignore[misc]
 
 from mars_agent.orchestration.models import CrossDomainConflict, MissionGoal
+from mars_agent.specialists.contracts import SpecialistCapability
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class MultiAgentNegotiator:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         history: tuple[NegotiationRound, ...],
+        capabilities: tuple[SpecialistCapability, ...] = (),
     ) -> list[ChatCompletionMessageParam]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
@@ -103,6 +105,18 @@ class MultiAgentNegotiator:
             "crew_reduction must be 0–5. "
             "dust_degradation_adjustment must be 0.0–0.1."
         )
+
+        if capabilities:
+            lines = ["\n\nSpecialist preferences (preferred step sizes per knob):"]
+            for cap in capabilities:
+                for knob in cap.tradeoff_knobs:
+                    if knob.preferred_delta > 0.0:
+                        lines.append(
+                            f"  [{cap.subsystem.upper()}] {knob.name}: "
+                            f"preferred_delta={knob.preferred_delta} {knob.unit}, "
+                            f"range [{knob.min_value}, {knob.max_value}] — {knob.description}"
+                        )
+            system_prompt += "\n".join(lines)
 
         history_section = ""
         if history:
@@ -142,6 +156,7 @@ class MultiAgentNegotiator:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         history: tuple[NegotiationRound, ...] = (),
+        capabilities: tuple[SpecialistCapability, ...] = (),
     ) -> tuple[bool, float, int, float, str]:
         """
         Executes a multi-agent negotiation loop to resolve specific conflicts.
@@ -156,7 +171,9 @@ class MultiAgentNegotiator:
         try:
             response = self.client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=self._build_messages(goal, conflicts, current_reduction, history),
+                messages=self._build_messages(
+                    goal, conflicts, current_reduction, history, capabilities
+                ),
                 response_format={"type": "json_object"},
                 temperature=0.2,
             )

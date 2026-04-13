@@ -5,7 +5,9 @@ from mars_agent.specialists.contracts import (
     ModuleMetric,
     ModuleRequest,
     ModuleResponse,
+    SpecialistCapability,
     Subsystem,
+    TradeoffKnob,
     UncertaintyBounds,
 )
 from mars_agent.specialists.eclss import ECLSSSpecialist
@@ -22,6 +24,8 @@ __all__ = [
     "ModuleRequest",
     "ModuleResponse",
     "PowerSpecialist",
+    "SpecialistCapability",
     "Subsystem",
+    "TradeoffKnob",
     "UncertaintyBounds",
 ]

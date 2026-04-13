@@ -19,7 +19,9 @@ from mars_agent.specialists.contracts import (
     ModuleMetric,
     ModuleRequest,
     ModuleResponse,
+    SpecialistCapability,
     Subsystem,
+    TradeoffKnob,
     UncertaintyBounds,
 )
 
@@ -31,6 +33,46 @@ class PowerSpecialist:
     forecaster: GaussianMonteCarloForecaster = field(
         default_factory=lambda: GaussianMonteCarloForecaster(seed=123)
     )
+
+    def capabilities(self) -> SpecialistCapability:
+        """Return this specialist's self-description for negotiation."""
+        return SpecialistCapability(
+            subsystem=Subsystem.POWER,
+            accepts_inputs=(
+                "solar_generation_kw",
+                "battery_capacity_kwh",
+                "critical_load_kw",
+                "dust_degradation_fraction",
+                "hours_without_sun",
+            ),
+            produces_metrics=(
+                "effective_generation_kw",
+                "load_margin_kw",
+                "storage_cover_hours",
+            ),
+            tradeoff_knobs=(
+                TradeoffKnob(
+                    name="dust_degradation_adjustment",
+                    description=(
+                        "Reduce effective dust degradation fraction via panel cleaning schedule"
+                    ),
+                    min_value=0.0,
+                    max_value=0.1,
+                    preferred_delta=0.02,
+                    unit="fraction",
+                ),
+                TradeoffKnob(
+                    name="solar_generation_kw",
+                    description=(
+                        "Read-only: rated solar panel capacity (not directly negotiable)"
+                    ),
+                    min_value=0.0,
+                    max_value=0.0,
+                    preferred_delta=0.0,
+                    unit="kW",
+                ),
+            ),
+        )
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.POWER:

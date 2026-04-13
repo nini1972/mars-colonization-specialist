@@ -19,7 +19,9 @@ from mars_agent.specialists.contracts import (
     ModuleMetric,
     ModuleRequest,
     ModuleResponse,
+    SpecialistCapability,
     Subsystem,
+    TradeoffKnob,
     UncertaintyBounds,
 )
 
@@ -31,6 +33,43 @@ class ECLSSSpecialist:
     forecaster: GaussianMonteCarloForecaster = field(
         default_factory=GaussianMonteCarloForecaster
     )
+
+    def capabilities(self) -> SpecialistCapability:
+        """Return this specialist's self-description for negotiation."""
+        return SpecialistCapability(
+            subsystem=Subsystem.ECLSS,
+            accepts_inputs=(
+                "crew_count",
+                "o2_demand_per_crew_kg_day",
+                "water_demand_per_crew_l_day",
+                "recycle_efficiency",
+                "thermal_load_kw",
+                "o2_partial_pressure_kpa",
+            ),
+            produces_metrics=(
+                "oxygen_generation_kg_day",
+                "water_makeup_l_day",
+                "eclss_power_demand_kw",
+            ),
+            tradeoff_knobs=(
+                TradeoffKnob(
+                    name="crew_reduction",
+                    description="Number of crew members to stand down from active duty",
+                    min_value=0.0,
+                    max_value=5.0,
+                    preferred_delta=1.0,
+                    unit="crew",
+                ),
+                TradeoffKnob(
+                    name="recycle_efficiency",
+                    description="Increase water/O₂ recycling efficiency to reduce ECLSS power demand",
+                    min_value=0.75,
+                    max_value=0.98,
+                    preferred_delta=0.02,
+                    unit="ratio",
+                ),
+            ),
+        )
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.ECLSS:
