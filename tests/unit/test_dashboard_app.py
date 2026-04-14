@@ -760,3 +760,111 @@ def test_agents_fragment_required_keys_present(
     assert response.status_code == 200
     assert 'data-fragment-required="agents,ui_schema_version"' in response.text
 
+
+# ---------------------------------------------------------------------------
+# Gap #7 — Fault rendering in Agent Health panel
+# ---------------------------------------------------------------------------
+
+
+def test_agents_fragment_shows_faults_column(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agents fragment must include a Faults column header."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.eclss": {
+                "calls": 1.0,
+                "total_latency_ms": 5.0,
+                "gate_pass": 1.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 1.0,
+                "last_latency_ms": 5.0,
+                "fault_count": 0.0,
+                "last_failed": 0.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "Faults" in response.text
+
+
+def test_agents_fragment_shows_fault_count_when_faults_present(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agents fragment must surface fault_count when a specialist has recorded faults."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.isru": {
+                "calls": 3.0,
+                "total_latency_ms": 30.0,
+                "gate_pass": 2.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 0.0,
+                "last_latency_ms": 8.0,
+                "fault_count": 1.0,
+                "last_failed": 0.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "Isru" in response.text
+    assert "1" in response.text  # fault_count
+
+
+def test_agents_fragment_shows_warn_status_when_last_failed(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When last_failed=1 the agent row must render the status-warn CSS class."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.power": {
+                "calls": 2.0,
+                "total_latency_ms": 20.0,
+                "gate_pass": 1.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 0.0,
+                "last_latency_ms": 10.0,
+                "fault_count": 1.0,
+                "last_failed": 1.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "status-warn" in response.text
+    assert "fault" in response.text
+
+
+def test_agents_fragment_no_warn_status_when_healthy(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Healthy specialist rows must not render the status-warn class."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.eclss": {
+                "calls": 2.0,
+                "total_latency_ms": 10.0,
+                "gate_pass": 2.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 1.0,
+                "last_latency_ms": 4.0,
+                "fault_count": 0.0,
+                "last_failed": 0.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "status-warn" not in response.text
+    assert "status-pass" in response.text
+

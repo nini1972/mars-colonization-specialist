@@ -312,7 +312,7 @@ class CentralPlanner:
         evidence: tuple[EvidenceReference, ...],
         isru_reduction: float,
     ) -> tuple[
-        tuple[ModuleResponse, ModuleResponse, ModuleResponse, ModuleResponse],
+        tuple[ModuleResponse | None, ModuleResponse | None, ModuleResponse | None, ModuleResponse | None],
         tuple[SpecialistTiming, ...],
     ]:
         eclss_request = self._eclss_request(goal, evidence)
@@ -327,43 +327,80 @@ class CentralPlanner:
         thermal_specialist = self.registry.get(Subsystem.HABITAT_THERMODYNAMICS)
         power_specialist = self.registry.get(Subsystem.POWER)
 
+        eclss_response: ModuleResponse | None = None
+        isru_response: ModuleResponse | None = None
+        thermal_response: ModuleResponse | None = None
+        eclss_ms = isru_ms = thermal_ms = 0.0
+        eclss_failure: str | None = None
+        isru_failure: str | None = None
+        thermal_failure: str | None = None
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             eclss_fut = pool.submit(_timed_analyze, eclss_specialist, eclss_request)
             isru_fut = pool.submit(_timed_analyze, isru_specialist, isru_request)
             thermal_fut = pool.submit(_timed_analyze, thermal_specialist, thermal_request)
 
-            eclss_response, eclss_ms = eclss_fut.result()
-            isru_response, isru_ms = isru_fut.result()
-            thermal_response, thermal_ms = thermal_fut.result()
+            try:
+                eclss_response, eclss_ms = eclss_fut.result()
+            except Exception as exc:  # noqa: BLE001
+                eclss_failure = f"{type(exc).__name__}: {exc}"
 
-        critical_load_kw = (
-            eclss_response.get_metric("eclss_power_demand_kw").value.mean
-            + isru_response.get_metric("isru_power_demand_kw").value.mean
-        )
+            try:
+                isru_response, isru_ms = isru_fut.result()
+            except Exception as exc:  # noqa: BLE001
+                isru_failure = f"{type(exc).__name__}: {exc}"
 
-        power_request = self._power_request(goal, evidence, critical_load_kw)
-        power_response, power_ms = _timed_analyze(power_specialist, power_request)
+            try:
+                thermal_response, thermal_ms = thermal_fut.result()
+            except Exception as exc:  # noqa: BLE001
+                thermal_failure = f"{type(exc).__name__}: {exc}"
+
+        # Power depends on ECLSS + ISRU outputs; skip it if either upstream specialist failed.
+        power_response: ModuleResponse | None = None
+        power_ms = 0.0
+        power_failure: str | None = None
+
+        if eclss_response is not None and isru_response is not None:
+            critical_load_kw = (
+                eclss_response.get_metric("eclss_power_demand_kw").value.mean
+                + isru_response.get_metric("isru_power_demand_kw").value.mean
+            )
+            power_request = self._power_request(goal, evidence, critical_load_kw)
+            try:
+                power_response, power_ms = _timed_analyze(power_specialist, power_request)
+            except Exception as exc:  # noqa: BLE001
+                power_failure = f"{type(exc).__name__}: {exc}"
+        else:
+            power_failure = "skipped: upstream dependency failure in eclss or isru"
 
         timings: tuple[SpecialistTiming, ...] = (
             SpecialistTiming(
-                subsystem_name=eclss_response.subsystem.value,
+                subsystem_name=Subsystem.ECLSS.value,
                 latency_ms=eclss_ms,
-                gate_accepted=eclss_response.gate.accepted,
+                gate_accepted=eclss_response.gate.accepted if eclss_response is not None else False,
+                failed=eclss_failure is not None,
+                failure_reason=eclss_failure,
             ),
             SpecialistTiming(
-                subsystem_name=isru_response.subsystem.value,
+                subsystem_name=Subsystem.ISRU.value,
                 latency_ms=isru_ms,
-                gate_accepted=isru_response.gate.accepted,
+                gate_accepted=isru_response.gate.accepted if isru_response is not None else False,
+                failed=isru_failure is not None,
+                failure_reason=isru_failure,
             ),
             SpecialistTiming(
-                subsystem_name=power_response.subsystem.value,
+                subsystem_name=Subsystem.POWER.value,
                 latency_ms=power_ms,
-                gate_accepted=power_response.gate.accepted,
+                gate_accepted=power_response.gate.accepted if power_response is not None else False,
+                failed=power_failure is not None,
+                failure_reason=power_failure,
             ),
             SpecialistTiming(
-                subsystem_name=thermal_response.subsystem.value,
+                subsystem_name=Subsystem.HABITAT_THERMODYNAMICS.value,
                 latency_ms=thermal_ms,
-                gate_accepted=thermal_response.gate.accepted,
+                gate_accepted=thermal_response.gate.accepted if thermal_response is not None else False,
+                failed=thermal_failure is not None,
+                failure_reason=thermal_failure,
             ),
         )
         return (eclss_response, isru_response, power_response, thermal_response), timings
@@ -533,10 +570,10 @@ class CentralPlanner:
         negotiation_history: list[NegotiationRound] = []
         current_reduction = 0.0
 
-        eclss_response: ModuleResponse
-        isru_response: ModuleResponse
-        power_response: ModuleResponse
-        thermal_response: ModuleResponse
+        eclss_response: ModuleResponse | None
+        isru_response: ModuleResponse | None
+        power_response: ModuleResponse | None
+        thermal_response: ModuleResponse | None
         last_timings: tuple[SpecialistTiming, ...] = ()
 
         conflicts: tuple[CrossDomainConflict, ...] = ()
@@ -551,6 +588,32 @@ class CentralPlanner:
                 evidence,
                 isru_reduction=current_reduction,
             )
+
+            # If any specialist failed, return a degraded plan immediately.
+            # Replanning cannot proceed without complete specialist outputs.
+            if any(t.failed for t in last_timings):
+                successful_responses = tuple(
+                    r
+                    for r in (eclss_response, isru_response, power_response, thermal_response)
+                    if r is not None
+                )
+                return PlanResult(
+                    mission_id=goal.mission_id,
+                    started_phase=goal.current_phase,
+                    next_phase=goal.current_phase,
+                    subsystem_responses=successful_responses,
+                    conflicts=(),
+                    replan_events=tuple(replan_events),
+                    specialist_timings=last_timings,
+                    degraded=True,
+                )
+
+            # At this point all specialists succeeded — narrow Optional types.
+            assert eclss_response is not None
+            assert isru_response is not None
+            assert power_response is not None
+            assert thermal_response is not None
+
             conflicts = self.coupling_checker.evaluate(
                 eclss=eclss_response,
                 isru=isru_response,
@@ -567,6 +630,10 @@ class CentralPlanner:
                 negotiation_history.append(neg_round)
                 replan_events.append(ReplanEvent(attempt=attempt + 1, reason=rationale))
 
+        assert eclss_response is not None
+        assert isru_response is not None
+        assert power_response is not None
+        assert thermal_response is not None
         readiness = self._readiness(eclss_response, isru_response, power_response)
         next_phase = self.state_machine.next_phase(goal.current_phase, readiness)
 

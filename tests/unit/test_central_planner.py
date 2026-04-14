@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.orchestration import (
@@ -19,6 +22,9 @@ from mars_agent.orchestration.negotiation_store import (
 )
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import Subsystem
+
+if TYPE_CHECKING:
+    from mars_agent.orchestration.registry import SpecialistRegistry
 
 
 def _evidence() -> tuple[EvidenceReference, ...]:
@@ -348,4 +354,140 @@ def test_specialist_timings_gate_accepted_is_bool() -> None:
     result = planner.plan(goal=_basic_goal(), evidence=_evidence())
     for timing in result.specialist_timings:
         assert isinstance(timing.gate_accepted, bool)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for Gap #7 — Specialist Fault Isolation
+# ---------------------------------------------------------------------------
+
+
+def _failing_specialist(subsystem: Subsystem) -> object:
+    """Return a mock specialist that raises RuntimeError on analyze()."""
+
+    class _FailingSpecialist:
+        def capabilities(self) -> object:
+            from mars_agent.specialists.contracts import SpecialistCapability
+
+            return SpecialistCapability(
+                subsystem=subsystem,
+                accepts_inputs=(),
+                produces_metrics=(),
+                tradeoff_knobs=(),
+            )
+
+        def analyze(self, request: object) -> object:
+            raise RuntimeError(f"Simulated failure in {subsystem.value}")
+
+    return _FailingSpecialist()
+
+
+def _registry_with_failing(failing: Subsystem) -> SpecialistRegistry:
+    """Build a registry where one specialist raises on analyze()."""
+    from mars_agent.orchestration.registry import SpecialistRegistry
+    from mars_agent.specialists.eclss import ECLSSSpecialist
+    from mars_agent.specialists.habitat_thermodynamics import HabitatThermodynamicsSpecialist
+    from mars_agent.specialists.isru import ISRUSpecialist
+    from mars_agent.specialists.power import PowerSpecialist
+
+    registry = SpecialistRegistry()
+    specialists = {
+        Subsystem.ECLSS: ECLSSSpecialist(),
+        Subsystem.ISRU: ISRUSpecialist(),
+        Subsystem.POWER: PowerSpecialist(),
+        Subsystem.HABITAT_THERMODYNAMICS: HabitatThermodynamicsSpecialist(),
+    }
+    for sub, spec in specialists.items():
+        registry.register(_failing_specialist(sub) if sub == failing else spec)  # type: ignore[arg-type]
+    return registry
+
+
+def test_planner_degrades_gracefully_when_eclss_raises() -> None:
+    """When ECLSS raises, plan() returns degraded=True and Power is also marked failed."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.ECLSS))
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is True
+    by_name = {t.subsystem_name: t for t in result.specialist_timings}
+    assert by_name[Subsystem.ECLSS.value].failed is True
+    assert by_name[Subsystem.ECLSS.value].failure_reason is not None
+    # Power depends on ECLSS — must also be marked failed (skipped)
+    assert by_name[Subsystem.POWER.value].failed is True
+    # ISRU and Thermal should have succeeded
+    assert by_name[Subsystem.ISRU.value].failed is False
+    assert by_name[Subsystem.HABITAT_THERMODYNAMICS.value].failed is False
+    # Only successful responses included
+    assert len(result.subsystem_responses) == 2  # ISRU + Thermal
+
+
+def test_planner_degrades_gracefully_when_isru_raises() -> None:
+    """When ISRU raises, plan() returns degraded=True and Power is also marked failed."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.ISRU))
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is True
+    by_name = {t.subsystem_name: t for t in result.specialist_timings}
+    assert by_name[Subsystem.ISRU.value].failed is True
+    assert by_name[Subsystem.POWER.value].failed is True
+    assert by_name[Subsystem.ECLSS.value].failed is False
+    assert by_name[Subsystem.HABITAT_THERMODYNAMICS.value].failed is False
+    assert len(result.subsystem_responses) == 2  # ECLSS + Thermal
+
+
+def test_planner_degrades_gracefully_when_thermal_only_raises() -> None:
+    """When only Thermal raises, ECLSS/ISRU/Power still succeed and plan is degraded."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.HABITAT_THERMODYNAMICS))
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is True
+    by_name = {t.subsystem_name: t for t in result.specialist_timings}
+    assert by_name[Subsystem.HABITAT_THERMODYNAMICS.value].failed is True
+    # Power must still have been attempted (ECLSS + ISRU both available)
+    assert by_name[Subsystem.POWER.value].failed is False
+    assert by_name[Subsystem.ECLSS.value].failed is False
+    assert by_name[Subsystem.ISRU.value].failed is False
+    # Three successful responses: ECLSS, ISRU, Power
+    assert len(result.subsystem_responses) == 3
+
+
+def test_planner_degrades_gracefully_when_power_raises() -> None:
+    """When Power raises, plan() returns degraded=True; ECLSS/ISRU/Thermal succeed."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.POWER))
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is True
+    by_name = {t.subsystem_name: t for t in result.specialist_timings}
+    assert by_name[Subsystem.POWER.value].failed is True
+    assert by_name[Subsystem.ECLSS.value].failed is False
+    assert by_name[Subsystem.ISRU.value].failed is False
+    assert by_name[Subsystem.HABITAT_THERMODYNAMICS.value].failed is False
+    # Three successful responses: ECLSS, ISRU, Thermal
+    assert len(result.subsystem_responses) == 3
+
+
+def test_degraded_plan_stays_in_current_phase() -> None:
+    """A degraded plan must not advance the mission phase (no readiness signals available)."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.ECLSS))
+    goal = _basic_goal()
+    result = planner.plan(goal=goal, evidence=_evidence())
+
+    assert result.degraded is True
+    assert result.next_phase == goal.current_phase
+
+
+def test_degraded_plan_has_no_conflicts() -> None:
+    """A degraded plan must report no conflicts (coupling check was skipped)."""
+    planner = CentralPlanner(registry=_registry_with_failing(Subsystem.ISRU))
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is True
+    assert result.conflicts == ()
+
+
+def test_healthy_plan_is_not_marked_degraded() -> None:
+    """A plan with all specialists succeeding must return degraded=False."""
+    planner = CentralPlanner()
+    result = planner.plan(goal=_basic_goal(), evidence=_evidence())
+
+    assert result.degraded is False
+    assert all(not t.failed for t in result.specialist_timings)
 

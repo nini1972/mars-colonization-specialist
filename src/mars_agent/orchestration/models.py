@@ -75,6 +75,8 @@ class SpecialistTiming:
     subsystem_name: str
     latency_ms: float
     gate_accepted: bool
+    failed: bool = False
+    failure_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +90,7 @@ class PlanResult:
     conflicts: tuple[CrossDomainConflict, ...]
     replan_events: tuple[ReplanEvent, ...] = ()
     specialist_timings: tuple[SpecialistTiming, ...] = ()
+    degraded: bool = False
 
 
 @dataclass(slots=True)

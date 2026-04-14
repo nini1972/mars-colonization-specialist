@@ -15,6 +15,7 @@
         <th>Avg Latency (ms)</th>
         <th>Gate Pass</th>
         <th>Gate Fail</th>
+        <th>Faults</th>
         <th>Last Outcome</th>
       </tr>
     </thead>
@@ -26,11 +27,18 @@
         <td>{{ row.avg_latency_ms }}</td>
         <td>{{ row.gate_pass }}</td>
         <td>{{ row.gate_fail }}</td>
+        <td>{{ row.fault_count }}</td>
         <td>
-          <span class="status-dot {% if row.last_gate_accepted %}status-pass{% else %}status-fail{% endif %}"
-                aria-label="{% if row.last_gate_accepted %}pass{% else %}fail{% endif %}">
-          </span>
-          {% if row.last_gate_accepted %}pass{% else %}fail{% endif %}
+          {% if row.last_failed %}
+          <span class="status-dot status-warn" aria-label="fault"></span>
+          fault
+          {% elif row.last_gate_accepted %}
+          <span class="status-dot status-pass" aria-label="pass"></span>
+          pass
+          {% else %}
+          <span class="status-dot status-fail" aria-label="fail"></span>
+          fail
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

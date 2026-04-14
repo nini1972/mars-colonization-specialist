@@ -72,6 +72,7 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .status-dot { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; }
 .status-pass { background: #2f7f5f; }
 .status-fail { background: #b65a2a; }
+.status-warn { background: #b68a00; }
 .modal-backdrop {
   position: fixed;
   inset: 0;

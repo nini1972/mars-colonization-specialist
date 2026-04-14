@@ -422,6 +422,8 @@ def _build_agents_panel() -> list[dict[str, object]]:
         calls = int(metrics.get("calls", 0.0))
         total_latency = metrics.get("total_latency_ms", 0.0)
         avg_latency = round(total_latency / calls, 1) if calls > 0 else 0.0
+        fault_count = int(metrics.get("fault_count", 0.0))
+        last_failed = bool(metrics.get("last_failed", 0.0))
         rows.append(
             {
                 "subsystem": subsystem,
@@ -431,6 +433,8 @@ def _build_agents_panel() -> list[dict[str, object]]:
                 "gate_pass": int(metrics.get("gate_pass", 0.0)),
                 "gate_fail": int(metrics.get("gate_fail", 0.0)),
                 "last_gate_accepted": bool(metrics.get("last_gate_accepted", 0.0)),
+                "fault_count": fault_count,
+                "last_failed": last_failed,
             }
         )
     return rows

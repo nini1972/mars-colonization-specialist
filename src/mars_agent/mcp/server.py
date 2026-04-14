@@ -67,6 +67,8 @@ _SPECIALIST_METRIC_KEYS = (
     "gate_fail",
     "last_gate_accepted",
     "last_latency_ms",
+    "fault_count",
+    "last_failed",
 )
 _ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark", "telemetry"}
 _TOOL_PERMISSION_BY_NAME = {
@@ -516,12 +518,18 @@ def _record_specialist_metric(timing: SpecialistTiming) -> None:
     bucket = _TOOL_METRICS.setdefault(tool_name, {key: 0.0 for key in _SPECIALIST_METRIC_KEYS})
     bucket["calls"] += 1.0
     bucket["total_latency_ms"] += timing.latency_ms
-    if timing.gate_accepted:
-        bucket["gate_pass"] += 1.0
-        bucket["last_gate_accepted"] = 1.0
-    else:
-        bucket["gate_fail"] += 1.0
+    if timing.failed:
+        bucket["fault_count"] += 1.0
+        bucket["last_failed"] = 1.0
         bucket["last_gate_accepted"] = 0.0
+    else:
+        bucket["last_failed"] = 0.0
+        if timing.gate_accepted:
+            bucket["gate_pass"] += 1.0
+            bucket["last_gate_accepted"] = 1.0
+        else:
+            bucket["gate_fail"] += 1.0
+            bucket["last_gate_accepted"] = 0.0
     bucket["last_latency_ms"] = timing.latency_ms
     _persist_runtime_snapshot_best_effort()
 
@@ -865,10 +873,21 @@ async def _invoke_runtime_tool(
             _record_specialist_metric(timing)
         plan_id = f"plan-{len(_adapter._plans) + 1:04d}"
         _adapter._plans[plan_id] = plan
-        return {
+        result: dict[str, object] = {
             "plan_id": plan_id,
             "plan": cast(object, to_mcp_value(plan)),
         }
+        if plan.degraded:
+            result["degraded"] = True
+            result["specialist_faults"] = [
+                {
+                    "subsystem": t.subsystem_name,
+                    "failure_reason": t.failure_reason,
+                }
+                for t in plan.specialist_timings
+                if t.failed
+            ]
+        return result
 
     if tool_name == "mars.simulate":
         plan_id = _require_string(arguments, "plan_id")

@@ -1,9 +1,12 @@
 import anyio
+from uuid import uuid4
+
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 
 async def main() -> None:
+    run_id = uuid4().hex[:8]
     async with streamable_http_client("http://localhost:8000/mcp") as (
         read_stream,
         write_stream,
@@ -41,7 +44,7 @@ async def main() -> None:
                             "relevance_score": 0.97,
                         }
                     ],
-                    "request_id": "req-custom-plan-1",
+                    "request_id": f"req-{run_id}-plan",
                 },
             )
             print("plan:", plan_result.structuredContent)
@@ -54,7 +57,7 @@ async def main() -> None:
                     "plan_id": plan_id,
                     "seed": 42,
                     "max_repair_attempts": 2,
-                    "request_id": "req-custom-sim-1",
+                    "request_id": f"req-{run_id}-sim",
                 },
             )
             print("simulate:", sim_result.structuredContent)
@@ -67,7 +70,7 @@ async def main() -> None:
                     "plan_id": plan_id,
                     "simulation_id": simulation_id,
                     "min_confidence": 0.75,
-                    "request_id": "req-custom-gov-1",
+                    "request_id": f"req-{run_id}-gov",
                 },
             )
             print("governance:", gov_result.structuredContent)
@@ -77,7 +80,7 @@ async def main() -> None:
                 {
                     "plan_id": plan_id,
                     "simulation_id": simulation_id,
-                    "request_id": "req-custom-bench-1",
+                    "request_id": f"req-{run_id}-bench",
                 },
             )
             print("benchmark:", bench_result.structuredContent)
