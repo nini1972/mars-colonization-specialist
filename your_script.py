@@ -1,6 +1,6 @@
-import anyio
 from uuid import uuid4
 
+import anyio
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 

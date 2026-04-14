@@ -312,7 +312,12 @@ class CentralPlanner:
         evidence: tuple[EvidenceReference, ...],
         isru_reduction: float,
     ) -> tuple[
-        tuple[ModuleResponse | None, ModuleResponse | None, ModuleResponse | None, ModuleResponse | None],
+        tuple[
+            ModuleResponse | None,
+            ModuleResponse | None,
+            ModuleResponse | None,
+            ModuleResponse | None,
+        ],
         tuple[SpecialistTiming, ...],
     ]:
         eclss_request = self._eclss_request(goal, evidence)
@@ -398,7 +403,9 @@ class CentralPlanner:
             SpecialistTiming(
                 subsystem_name=Subsystem.HABITAT_THERMODYNAMICS.value,
                 latency_ms=thermal_ms,
-                gate_accepted=thermal_response.gate.accepted if thermal_response is not None else False,
+                gate_accepted=(
+                    thermal_response.gate.accepted if thermal_response is not None else False
+                ),
                 failed=thermal_failure is not None,
                 failure_reason=thermal_failure,
             ),
