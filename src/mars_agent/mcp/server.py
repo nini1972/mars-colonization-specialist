@@ -39,9 +39,22 @@ from mars_agent.mcp.persistence import (
 from mars_agent.mcp.telemetry import TelemetryQueryService
 from mars_agent.orchestration import MissionGoal
 from mars_agent.orchestration.models import PlanResult, SpecialistTiming
+from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.simulation import SimulationPipeline
 from mars_agent.simulation.pipeline import SimulationReport
+from mars_agent.specialists import (
+    ECLSSSpecialist,
+    HabitatThermodynamicsSpecialist,
+    ISRUSpecialist,
+    PowerSpecialist,
+)
+from mars_agent.specialists.contracts import (
+    ModuleRequest,
+    ModuleResponse,
+    SpecialistCapability,
+    Subsystem,
+)
 
 _adapter = MarsMCPAdapter()
 mcp = FastMCP("mars-colonization-specialist", streamable_http_path="/")
@@ -55,6 +68,7 @@ _IDEMPOTENCY_MAX_ENTRIES_ENV = "MARS_MCP_IDEMPOTENCY_MAX_ENTRIES"
 _PERSISTENCE_BACKEND_ENV = "MARS_MCP_PERSISTENCE_BACKEND"
 _PERSISTENCE_SQLITE_PATH_ENV = "MARS_MCP_PERSISTENCE_SQLITE_PATH"
 _PERSISTENCE_CORRUPTION_FALLBACK_ENV = "MARS_MCP_PERSISTENCE_FALLBACK_ON_CORRUPTION"
+_DEV_FAIL_SPECIALIST_ENV = "MARS_DEV_FAIL_SPECIALIST"
 _DEFAULT_IDEMPOTENCY_TTL_SECONDS = 900.0
 _DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
 _DEFAULT_PERSISTENCE_BACKEND = "memory"
@@ -165,6 +179,71 @@ def _configured_permissions() -> set[str]:
         return set(_ALL_TOOL_PERMISSIONS)
     allowed = {item.strip() for item in value.split(",") if item.strip()}
     return allowed if allowed else set()
+
+
+def _configured_dev_fail_specialist() -> Subsystem | None:
+    raw = os.getenv(_DEV_FAIL_SPECIALIST_ENV)
+    if raw is None:
+        return None
+
+    value = raw.strip().lower()
+    if not value:
+        return None
+
+    by_name = {subsystem.value: subsystem for subsystem in Subsystem}
+    try:
+        return by_name[value]
+    except KeyError as exc:
+        valid = ", ".join(sorted(by_name))
+        raise RuntimeError(
+            f"Invalid {_DEV_FAIL_SPECIALIST_ENV} value '{value}'. "
+            f"Expected one of: {valid}"
+        ) from exc
+
+
+class _FailingSpecialist:
+    """Dev-only specialist wrapper that raises on analyze()."""
+
+    def __init__(self, subsystem: Subsystem, delegate: object) -> None:
+        self._subsystem = subsystem
+        self._delegate = delegate
+
+    def capabilities(self) -> SpecialistCapability:
+        return cast(SpecialistCapability, self._delegate.capabilities())
+
+    def analyze(self, request: ModuleRequest) -> ModuleResponse:
+        raise RuntimeError(
+            f"Simulated failure in {self._subsystem.value} "
+            f"via {_DEV_FAIL_SPECIALIST_ENV}"
+        )
+
+
+def _apply_dev_failure_injection() -> None:
+    failing = _configured_dev_fail_specialist()
+    if failing is None:
+        return
+
+    registry = SpecialistRegistry()
+    specialists = {
+        Subsystem.ECLSS: ECLSSSpecialist(),
+        Subsystem.ISRU: ISRUSpecialist(),
+        Subsystem.POWER: PowerSpecialist(),
+        Subsystem.HABITAT_THERMODYNAMICS: HabitatThermodynamicsSpecialist(),
+    }
+    for subsystem, specialist in specialists.items():
+        if subsystem == failing:
+            registry.register(_FailingSpecialist(subsystem, specialist))
+        else:
+            registry.register(specialist)
+
+    _adapter.planner.registry = registry
+    print(
+        (
+            "[mars-mcp][dev] specialist failure injection enabled: "
+            f"{_DEV_FAIL_SPECIALIST_ENV}={failing.value}"
+        ),
+        file=sys.stderr,
+    )
 
 
 def _configured_tool_timeout_seconds() -> float | None:
@@ -365,6 +444,7 @@ def _idempotency_now_seconds() -> float:
 
 
 _initialize_persistence_backend()
+_apply_dev_failure_injection()
 
 
 def _prune_completed_idempotency_entries(now: float | None = None) -> None:

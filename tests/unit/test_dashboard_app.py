@@ -791,6 +791,56 @@ def test_agents_fragment_shows_faults_column(
     assert "Faults" in response.text
 
 
+def test_agents_fragment_shows_gate_reject_label(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agents fragment must label gate rejections distinctly from runtime faults."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.eclss": {
+                "calls": 1.0,
+                "total_latency_ms": 5.0,
+                "gate_pass": 0.0,
+                "gate_fail": 1.0,
+                "last_gate_accepted": 0.0,
+                "last_latency_ms": 5.0,
+                "fault_count": 0.0,
+                "last_failed": 0.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "Gate Reject" in response.text
+
+
+def test_agents_fragment_shows_failure_formula_note(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agents fragment should explain how total failures are composed."""
+    _patch_specialist_metrics(
+        monkeypatch,
+        data={
+            "specialist.power": {
+                "calls": 1.0,
+                "total_latency_ms": 0.0,
+                "gate_pass": 0.0,
+                "gate_fail": 0.0,
+                "last_gate_accepted": 0.0,
+                "last_latency_ms": 0.0,
+                "fault_count": 1.0,
+                "last_failed": 1.0,
+            }
+        },
+    )
+    response = client.get("/dashboard/fragments/agents")
+    assert response.status_code == 200
+    assert "Total failures = Gate Reject + Faults" in response.text
+
+
 def test_agents_fragment_shows_fault_count_when_faults_present(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

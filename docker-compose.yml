@@ -17,6 +17,7 @@ services:
       MARS_MCP_AUTH_PERMISSIONS: "${MARS_MCP_AUTH_PERMISSIONS:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       MARS_LLM_ORCHESTRATOR_ENABLED: "${MARS_LLM_ORCHESTRATOR_ENABLED:-false}"
+      MARS_DEV_FAIL_SPECIALIST: "${MARS_DEV_FAIL_SPECIALIST:-}"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s

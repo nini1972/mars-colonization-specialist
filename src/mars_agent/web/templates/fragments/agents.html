@@ -14,8 +14,8 @@
         <th>Calls</th>
         <th>Avg Latency (ms)</th>
         <th>Gate Pass</th>
-        <th>Gate Fail</th>
-        <th>Faults</th>
+        <th title="Gate rejects for completed specialist responses">Gate Reject</th>
+        <th title="Runtime exceptions or dependency skips">Faults</th>
         <th>Last Outcome</th>
       </tr>
     </thead>
@@ -44,5 +44,8 @@
       {% endfor %}
     </tbody>
   </table>
+  <p class="muted" title="Gate Reject counts policy rejections, while Faults count runtime exceptions or skips.">
+    Note: Total failures = Gate Reject + Faults.
+  </p>
   {% endif %}
 </div>

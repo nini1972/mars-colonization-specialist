@@ -15,8 +15,8 @@ from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.simulation import SimulationPipeline
 from mars_agent.simulation.pipeline import SimulationReport
 
-type MCPScalar = str | int | float | bool | None
-type MCPValue = MCPScalar | list["MCPValue"] | dict[str, "MCPValue"]
+MCPScalar = str | int | float | bool | None
+MCPValue = MCPScalar | list["MCPValue"] | dict[str, "MCPValue"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,6 +5,18 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 
+def _payload(result: object) -> dict[str, object] | None:
+    structured = getattr(result, "structuredContent", None)
+    return structured if isinstance(structured, dict) else None
+
+
+def _describe_error(result: object) -> str:
+    if not getattr(result, "isError", False):
+        return ""
+    content = getattr(result, "content", None)
+    return str(content) if content is not None else "unknown tool error"
+
+
 async def main() -> None:
     run_id = uuid4().hex[:8]
     async with streamable_http_client("http://localhost:8000/mcp") as (
@@ -47,9 +59,21 @@ async def main() -> None:
                     "request_id": f"req-{run_id}-plan",
                 },
             )
-            print("plan:", plan_result.structuredContent)
+            plan_payload = _payload(plan_result)
+            print("plan:", plan_payload)
+            if plan_payload is None:
+                print("plan returned no structured payload", _describe_error(plan_result))
+                return
 
-            plan_id = plan_result.structuredContent["plan_id"]
+            if bool(plan_payload.get("degraded", False)):
+                print("plan is degraded; skipping simulate/governance/benchmark")
+                print("faults:", plan_payload.get("specialist_faults", []))
+                return
+
+            plan_id = plan_payload.get("plan_id")
+            if not isinstance(plan_id, str):
+                print("plan_id missing from plan payload")
+                return
 
             sim_result = await session.call_tool(
                 "mars.simulate",
@@ -60,9 +84,16 @@ async def main() -> None:
                     "request_id": f"req-{run_id}-sim",
                 },
             )
-            print("simulate:", sim_result.structuredContent)
+            sim_payload = _payload(sim_result)
+            print("simulate:", sim_payload)
+            if sim_payload is None:
+                print("simulate returned no structured payload", _describe_error(sim_result))
+                return
 
-            simulation_id = sim_result.structuredContent["simulation_id"]
+            simulation_id = sim_payload.get("simulation_id")
+            if not isinstance(simulation_id, str):
+                print("simulation_id missing from simulation payload")
+                return
 
             gov_result = await session.call_tool(
                 "mars.governance",

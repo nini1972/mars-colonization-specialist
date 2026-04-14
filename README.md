@@ -31,6 +31,22 @@ $env:MARS_MCP_PERSISTENCE_BACKEND    = "sqlite"
 
 When using Docker/docker-compose, the env var is already defaulted to sqlite in docker-compose.yml and docker-run.ps1 — so the message only appears in the plain uvicorn dev workflow where no env vars are set.
 
+Dev-only failure injection (for dashboard degraded-path testing):
+
+```powershell
+$env:MARS_DEV_FAIL_SPECIALIST = "eclss"   # eclss | isru | power | habitat_thermodynamics
+docker compose up --build
+```
+
+Then invoke `mars.plan` through the running MCP endpoint (for example `your_script.py`) and confirm the dashboard Agent Health panel shows a fault (`status-warn`) and increased fault count.
+.\.venv\Scripts\python.exe .\your_script.py
+
+To disable injection:
+
+```powershell
+Remove-Item Env:MARS_DEV_FAIL_SPECIALIST
+```
+
 ## Start Docker-compose
 Option A — docker-compose (recommended, handles build + run together):
 
@@ -42,7 +58,8 @@ docker compose up --build -d
 
 Then navigate to http://localhost:8000/dashboard.
 To stop:docker compose down
-to stop and remove Sqlite volume:docker compose down -v
+to stop and remove Sqlite volume:
+docker compose down -v
 
 Option B — PowerShell scripts (build once, run separately):
 
