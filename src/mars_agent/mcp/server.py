@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
-from typing import Any, TypeVar, cast
+from typing import Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
 import anyio
@@ -201,15 +201,25 @@ def _configured_dev_fail_specialist() -> Subsystem | None:
         ) from exc
 
 
+class _SupportsCapabilitiesAndAnalyze(Protocol):
+    def capabilities(self) -> SpecialistCapability: ...
+
+    def analyze(self, request: ModuleRequest) -> ModuleResponse: ...
+
+
 class _FailingSpecialist:
     """Dev-only specialist wrapper that raises on analyze()."""
 
-    def __init__(self, subsystem: Subsystem, delegate: object) -> None:
+    def __init__(
+        self,
+        subsystem: Subsystem,
+        delegate: _SupportsCapabilitiesAndAnalyze,
+    ) -> None:
         self._subsystem = subsystem
         self._delegate = delegate
 
     def capabilities(self) -> SpecialistCapability:
-        return cast(SpecialistCapability, self._delegate.capabilities())
+        return self._delegate.capabilities()
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         raise RuntimeError(
@@ -224,7 +234,7 @@ def _apply_dev_failure_injection() -> None:
         return
 
     registry = SpecialistRegistry()
-    specialists = {
+    specialists: dict[Subsystem, _SupportsCapabilitiesAndAnalyze] = {
         Subsystem.ECLSS: ECLSSSpecialist(),
         Subsystem.ISRU: ISRUSpecialist(),
         Subsystem.POWER: PowerSpecialist(),
