@@ -122,3 +122,63 @@ def test_telemetry_tools_require_telemetry_permission_when_auth_enabled(
 
     error = _parse_tool_error(exc_info.value)
     assert error["code"] == "forbidden"
+
+
+def test_telemetry_overview_includes_plan_runtime_sync_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MARS_MCP_PLANNER_ASYNC", raising=False)
+
+    before = _call_direct_sync(
+        mars_telemetry_overview(request_id="req-telemetry-plan-runtime-sync-before")
+    )
+    before_runtime = before.get("plan_runtime")
+    assert isinstance(before_runtime, dict)
+    before_sync = float(before_runtime.get("sync_calls", 0.0))
+    before_async = float(before_runtime.get("async_calls", 0.0))
+
+    _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-telemetry-plan-runtime-sync-plan",
+        )
+    )
+
+    after = _call_direct_sync(
+        mars_telemetry_overview(request_id="req-telemetry-plan-runtime-sync-after")
+    )
+    after_runtime = after.get("plan_runtime")
+    assert isinstance(after_runtime, dict)
+    assert float(after_runtime.get("sync_calls", 0.0)) == pytest.approx(before_sync + 1.0)
+    assert float(after_runtime.get("async_calls", 0.0)) == pytest.approx(before_async)
+
+
+def test_telemetry_overview_includes_plan_runtime_async_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MARS_MCP_PLANNER_ASYNC", "true")
+
+    before = _call_direct_sync(
+        mars_telemetry_overview(request_id="req-telemetry-plan-runtime-async-before")
+    )
+    before_runtime = before.get("plan_runtime")
+    assert isinstance(before_runtime, dict)
+    before_sync = float(before_runtime.get("sync_calls", 0.0))
+    before_async = float(before_runtime.get("async_calls", 0.0))
+
+    _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-telemetry-plan-runtime-async-plan",
+        )
+    )
+
+    after = _call_direct_sync(
+        mars_telemetry_overview(request_id="req-telemetry-plan-runtime-async-after")
+    )
+    after_runtime = after.get("plan_runtime")
+    assert isinstance(after_runtime, dict)
+    assert float(after_runtime.get("sync_calls", 0.0)) == pytest.approx(before_sync)
+    assert float(after_runtime.get("async_calls", 0.0)) == pytest.approx(before_async + 1.0)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from time import perf_counter
@@ -63,6 +63,7 @@ _AUTH_ENABLED_ENV = "MARS_MCP_AUTH_ENABLED"
 _AUTH_TOKEN_ENV = "MARS_MCP_AUTH_TOKEN"
 _AUTH_PERMISSIONS_ENV = "MARS_MCP_AUTH_PERMISSIONS"
 _TOOL_TIMEOUT_SECONDS_ENV = "MARS_MCP_TOOL_TIMEOUT_SECONDS"
+_PLANNER_ASYNC_RUNTIME_ENV = "MARS_MCP_PLANNER_ASYNC"
 _IDEMPOTENCY_TTL_SECONDS_ENV = "MARS_MCP_IDEMPOTENCY_TTL_SECONDS"
 _IDEMPOTENCY_MAX_ENTRIES_ENV = "MARS_MCP_IDEMPOTENCY_MAX_ENTRIES"
 _PERSISTENCE_BACKEND_ENV = "MARS_MCP_PERSISTENCE_BACKEND"
@@ -74,6 +75,8 @@ _DEFAULT_IDEMPOTENCY_MAX_ENTRIES = 512
 _DEFAULT_PERSISTENCE_BACKEND = "memory"
 _DEFAULT_PERSISTENCE_SQLITE_PATH = ".mars_mcp_runtime.sqlite3"
 _TOOL_METRIC_KEYS = ("calls", "successes", "failures", "auth_failures", "total_latency_ms")
+_PLAN_RUNTIME_METRIC_KEY = "mars.plan.runtime"
+_PLAN_RUNTIME_METRIC_KEYS = ("sync_calls", "async_calls")
 _SPECIALIST_METRIC_KEYS = (
     "calls",
     "total_latency_ms",
@@ -278,6 +281,10 @@ def _configured_tool_timeout_seconds() -> float | None:
         )
 
     return timeout_seconds
+
+
+def _planner_async_runtime_enabled() -> bool:
+    return _parse_bool_env(os.getenv(_PLANNER_ASYNC_RUNTIME_ENV), default=False)
 
 
 def _configured_idempotency_ttl_seconds() -> float:
@@ -570,6 +577,16 @@ def telemetry_overview() -> Mapping[str, object]:
     return _TELEMETRY.overview()
 
 
+def telemetry_plan_runtime_metrics() -> dict[str, float]:
+    bucket = _TOOL_METRICS.get(_PLAN_RUNTIME_METRIC_KEY)
+    if bucket is None:
+        return {"sync_calls": 0.0, "async_calls": 0.0}
+    return {
+        "sync_calls": float(bucket.get("sync_calls", 0.0)),
+        "async_calls": float(bucket.get("async_calls", 0.0)),
+    }
+
+
 def telemetry_dashboard_snapshot(*, page_size: int = 20) -> Mapping[str, object]:
     return _TELEMETRY.dashboard_snapshot(
         page_size=page_size,
@@ -621,6 +638,18 @@ def _record_specialist_metric(timing: SpecialistTiming) -> None:
             bucket["gate_fail"] += 1.0
             bucket["last_gate_accepted"] = 0.0
     bucket["last_latency_ms"] = timing.latency_ms
+    _persist_runtime_snapshot_best_effort()
+
+
+def _record_plan_runtime_metric(*, async_runtime: bool) -> None:
+    bucket = _TOOL_METRICS.setdefault(
+        _PLAN_RUNTIME_METRIC_KEY,
+        {key: 0.0 for key in _PLAN_RUNTIME_METRIC_KEYS},
+    )
+    if async_runtime:
+        bucket["async_calls"] += 1.0
+    else:
+        bucket["sync_calls"] += 1.0
     _persist_runtime_snapshot_best_effort()
 
 
@@ -917,12 +946,32 @@ async def _run_bounded_sync(  # noqa: UP047
         ) from exc
 
 
+async def _run_bounded_async[TAsyncResult](
+    func: Callable[[], Awaitable[TAsyncResult]],
+    *,
+    timeout_seconds: float | None,
+) -> TAsyncResult:
+    if timeout_seconds is None:
+        return await func()
+
+    try:
+        with anyio.fail_after(timeout_seconds):
+            return await func()
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"Tool execution exceeded timeout of {timeout_seconds:.3f} seconds"
+        ) from exc
+
+
 async def _invoke_runtime_tool(
     tool_name: str,
     arguments: Mapping[str, object],
 ) -> dict[str, object]:
     if tool_name == "mars.telemetry.overview":
-        return {"overview": telemetry_overview()}
+        return {
+            "overview": telemetry_overview(),
+            "plan_runtime": telemetry_plan_runtime_metrics(),
+        }
 
     if tool_name == "mars.telemetry.events":
         return {
@@ -952,13 +1001,25 @@ async def _invoke_runtime_tool(
         goal = _parse_goal(_require_mapping(arguments, "goal"))
         evidence = _parse_evidence(arguments)
 
-        def _compute_plan() -> PlanResult:
-            return _adapter.planner.plan(goal=goal, evidence=evidence)
+        if _planner_async_runtime_enabled():
+            async def _compute_plan_async() -> PlanResult:
+                return await _adapter.planner.plan_async(goal=goal, evidence=evidence)
 
-        plan: PlanResult = await _run_bounded_sync(
-            _compute_plan,
-            timeout_seconds=_configured_tool_timeout_seconds(),
-        )
+            plan = cast(
+                PlanResult,
+                await _run_bounded_async(
+                    _compute_plan_async,
+                    timeout_seconds=_configured_tool_timeout_seconds(),
+                ),
+            )
+        else:
+            def _compute_plan() -> PlanResult:
+                return _adapter.planner.plan(goal=goal, evidence=evidence)
+
+            plan = await _run_bounded_sync(
+                _compute_plan,
+                timeout_seconds=_configured_tool_timeout_seconds(),
+            )
         for timing in plan.specialist_timings:
             _record_specialist_metric(timing)
         plan_id = f"plan-{len(_adapter._plans) + 1:04d}"
@@ -1166,6 +1227,9 @@ async def _invoke_with_envelope(
                 ),
             )
             return replayed_response
+
+        if tool_name == "mars.plan":
+            _record_plan_runtime_metric(async_runtime=_planner_async_runtime_enabled())
 
         response = await _invoke_runtime_tool(tool_name=tool_name, arguments=arguments)
         plan_id = response.get("plan_id")

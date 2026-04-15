@@ -79,6 +79,19 @@ def _patch_dashboard_snapshot(monkeypatch: pytest.MonkeyPatch, *, degraded: bool
     )
 
 
+def _patch_plan_runtime_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sync_calls: float = 0.0,
+    async_calls: float = 0.0,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_plan_runtime_metrics",
+        lambda: {"sync_calls": sync_calls, "async_calls": async_calls},
+    )
+
+
 def _patch_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_list_events(**_: object) -> dict[str, object]:
         return {
@@ -123,6 +136,7 @@ def test_dashboard_main_page_exposes_ui_schema_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -136,6 +150,7 @@ def test_dashboard_json_endpoint_keeps_json_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/api/telemetry/dashboard")
 
@@ -161,6 +176,7 @@ def test_fragment_integrity_rejects_unexpected_dashboard_key(
         return payload
 
     monkeypatch.setattr(dashboard_app, "telemetry_dashboard_snapshot", _invalid_payload)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard/fragments/overview")
 
@@ -189,6 +205,7 @@ def test_replay_fragment_shows_degraded_mode_banner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch, degraded=True)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard/fragments/replay")
 
@@ -201,6 +218,7 @@ def test_dashboard_page_includes_loading_skeleton_markers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -215,6 +233,7 @@ def test_main_page_shows_degraded_banner_when_backend_is_degraded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch, degraded=True)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -227,6 +246,7 @@ def test_fragment_integrity_markers_exist_for_all_fragment_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
     _patch_invocations(monkeypatch)
     monkeypatch.setattr(
         dashboard_app,
@@ -279,6 +299,7 @@ def test_dashboard_has_modal_loading_skeleton_and_close_control(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -682,6 +703,55 @@ def test_mcp_http_endpoint_is_mounted() -> None:
         if isinstance(route, Mount)
     ]
     assert "/mcp" in mounted_paths
+
+
+def test_overview_fragment_renders_plan_runtime_counters(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch, sync_calls=12.0, async_calls=4.0)
+
+    response = client.get("/dashboard/fragments/overview")
+
+    assert response.status_code == 200
+    assert "Plan Sync Calls" in response.text
+    assert "Plan Async Calls" in response.text
+    assert "Plan Runtime Ratio" in response.text
+    assert ">12.0<" in response.text
+    assert ">4.0<" in response.text
+    assert "75.0% / 25.0%" in response.text
+
+
+def test_overview_fragment_runtime_ratio_handles_zero_calls(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch, sync_calls=0.0, async_calls=0.0)
+
+    response = client.get("/dashboard/fragments/overview")
+
+    assert response.status_code == 200
+    assert "Plan Runtime Ratio" in response.text
+    assert "0.0% / 0.0%" in response.text
+
+
+def test_overview_fragment_rejects_invalid_plan_runtime_shape(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dashboard_snapshot(monkeypatch)
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_plan_runtime_metrics",
+        lambda: {"sync_calls": 1.0},
+    )
+
+    response = client.get("/dashboard/fragments/overview")
+
+    assert response.status_code == 500
+    assert "plan_runtime" in response.text
 
 
 # ---------------------------------------------------------------------------

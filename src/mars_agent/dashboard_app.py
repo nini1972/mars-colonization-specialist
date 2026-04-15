@@ -20,6 +20,7 @@ from mars_agent.mcp.server import (
     telemetry_dashboard_snapshot,
     telemetry_invocation_detail,
     telemetry_list_events,
+    telemetry_plan_runtime_metrics,
     telemetry_specialist_metrics,
 )
 
@@ -202,6 +203,17 @@ def _coerce_dashboard_payload(page_size: int) -> dict[str, object]:
         label="invocation_panel",
     )
 
+    return payload
+
+
+def _coerce_plan_runtime_metrics() -> Mapping[str, object]:
+    payload = cast(Mapping[str, object], telemetry_plan_runtime_metrics())
+    _validate_exact_keys(
+        payload,
+        required={"sync_calls", "async_calls"},
+        allowed={"sync_calls", "async_calls"},
+        label="plan_runtime",
+    )
     return payload
 
 
@@ -550,6 +562,7 @@ def overview_fragment(
 ) -> HTMLResponse:
     try:
         payload = _coerce_dashboard_payload(page_size)
+        plan_runtime = _coerce_plan_runtime_metrics()
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -560,6 +573,7 @@ def overview_fragment(
         context={
             "ui_schema_version": UI_SCHEMA_VERSION,
             "overview": payload["overview_panel"],
+            "plan_runtime": plan_runtime,
             "replay": payload["replay_degraded_panel"],
             "degraded": bool(replay.get("persistence_degraded", False)),
         },

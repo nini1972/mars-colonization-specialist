@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import dataclasses
 from dataclasses import dataclass, field
@@ -647,6 +648,121 @@ class CentralPlanner:
         )
         return final_reduction, updated_goal, rationale, neg_round
 
+    async def _handle_replan_async(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        knowledge_context: KnowledgeContext,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
+        """Async variant of _handle_replan for MCP async planner runtime."""
+        fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
+        cached = self.negotiation_store.lookup(fingerprint)
+        if cached is not None and cached.accepted:
+            new_reduction = min(0.8, max(current_reduction, cached.isru_reduction_fraction))
+            crew_reduction = cached.crew_reduction
+            dust_adj = cached.dust_degradation_adjustment
+            memory_tag = "fallback" if cached.is_fallback else "llm"
+            rationale = f"[memory hit][{memory_tag}] {cached.rationale}"
+            accepted = True
+            self.negotiation_store.store(
+                NegotiationOutcome(
+                    conflict_fingerprint=fingerprint,
+                    isru_reduction_fraction=cached.isru_reduction_fraction,
+                    crew_reduction=crew_reduction,
+                    dust_degradation_adjustment=dust_adj,
+                    rationale=cached.rationale,
+                    accepted=cached.accepted,
+                    is_fallback=cached.is_fallback,
+                    stored_at=cached.stored_at,
+                    hit_count=cached.hit_count + 1,
+                    knowledge_fingerprint=fingerprint,
+                )
+            )
+        else:
+            if (
+                self.negotiator.is_enabled
+                and self.negotiator.is_async_enabled
+                and self.negotiator.async_client is not None
+            ):
+                accepted, new_reduction, crew_reduction, dust_adj, rationale = (
+                    await self.negotiator.negotiate_async(
+                        goal=goal,
+                        conflicts=conflicts,
+                        current_reduction=current_reduction,
+                        history=history,
+                        capabilities=self.registry.all_capabilities(),
+                        knowledge_context=knowledge_context,
+                    )
+                )
+                if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
+                    accepted, new_reduction, crew_reduction, dust_adj, rationale = (
+                        await asyncio.to_thread(
+                            self.negotiator.negotiate,
+                            goal,
+                            conflicts,
+                            current_reduction,
+                            history,
+                            self.registry.all_capabilities(),
+                            knowledge_context,
+                        )
+                    )
+            else:
+                accepted, new_reduction, crew_reduction, dust_adj, rationale = (
+                    await asyncio.to_thread(
+                        self.negotiator.negotiate,
+                        goal,
+                        conflicts,
+                        current_reduction,
+                        history,
+                        self.registry.all_capabilities(),
+                        knowledge_context,
+                    )
+                )
+
+            is_fallback: bool
+            if not accepted:
+                new_reduction, crew_reduction, dust_adj, rationale = (
+                    self._conflict_aware_fallback(
+                        conflicts,
+                        current_reduction,
+                        knowledge_context,
+                    )
+                )
+                is_fallback = True
+            else:
+                is_fallback = False
+            self.negotiation_store.store(
+                NegotiationOutcome(
+                    conflict_fingerprint=fingerprint,
+                    isru_reduction_fraction=new_reduction,
+                    crew_reduction=crew_reduction,
+                    dust_degradation_adjustment=dust_adj,
+                    rationale=rationale,
+                    accepted=True,
+                    is_fallback=is_fallback,
+                    stored_at=now_utc_iso(),
+                    hit_count=0,
+                    knowledge_fingerprint=fingerprint,
+                )
+            )
+        final_reduction = max(current_reduction, new_reduction)
+        updated_goal = dataclasses.replace(
+            goal,
+            crew_size=max(1, goal.crew_size - crew_reduction),
+            dust_degradation_fraction=max(0.0, goal.dust_degradation_fraction - dust_adj),
+        )
+        neg_round = NegotiationRound(
+            round_num=len(history),
+            reduction_fraction=final_reduction,
+            accepted=accepted,
+            rationale=rationale,
+            crew_reduction=crew_reduction,
+            dust_degradation_adjustment=dust_adj,
+        )
+        return final_reduction, updated_goal, rationale, neg_round
+
     def _readiness(
         self,
         eclss: ModuleResponse,
@@ -736,6 +852,98 @@ class CentralPlanner:
 
             if attempt < self.settings.max_replan_attempts:
                 current_reduction, goal, rationale, neg_round = self._handle_replan(
+                    goal,
+                    conflicts,
+                    current_reduction,
+                    knowledge_context,
+                    history=tuple(negotiation_history),
+                )
+                negotiation_history.append(neg_round)
+                replan_events.append(ReplanEvent(attempt=attempt + 1, reason=rationale))
+
+        assert eclss_response is not None
+        assert isru_response is not None
+        assert power_response is not None
+        assert thermal_response is not None
+        readiness = self._readiness(eclss_response, isru_response, power_response)
+        next_phase = self.state_machine.next_phase(goal.current_phase, readiness)
+
+        return PlanResult(
+            mission_id=goal.mission_id,
+            started_phase=goal.current_phase,
+            next_phase=next_phase,
+            subsystem_responses=(eclss_response, isru_response, power_response, thermal_response),
+            conflicts=conflicts,
+            replan_events=tuple(replan_events),
+            specialist_timings=last_timings,
+        )
+
+    async def plan_async(
+        self,
+        goal: MissionGoal,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> PlanResult:
+        """Async planner path used by MCP runtime when explicitly enabled."""
+        replan_events: list[ReplanEvent] = []
+        negotiation_history: list[NegotiationRound] = []
+        current_reduction = 0.0
+
+        eclss_response: ModuleResponse | None
+        isru_response: ModuleResponse | None
+        power_response: ModuleResponse | None
+        thermal_response: ModuleResponse | None
+        last_timings: tuple[SpecialistTiming, ...] = ()
+
+        conflicts: tuple[CrossDomainConflict, ...] = ()
+        for attempt in range(self.settings.max_replan_attempts + 1):
+            (
+                eclss_response,
+                isru_response,
+                power_response,
+                thermal_response,
+            ), last_timings = await asyncio.to_thread(
+                self._run_modules,
+                goal,
+                evidence,
+                current_reduction,
+            )
+
+            if any(t.failed for t in last_timings):
+                successful_responses = tuple(
+                    r
+                    for r in (eclss_response, isru_response, power_response, thermal_response)
+                    if r is not None
+                )
+                return PlanResult(
+                    mission_id=goal.mission_id,
+                    started_phase=goal.current_phase,
+                    next_phase=goal.current_phase,
+                    subsystem_responses=successful_responses,
+                    conflicts=(),
+                    replan_events=tuple(replan_events),
+                    specialist_timings=last_timings,
+                    degraded=True,
+                )
+
+            assert eclss_response is not None
+            assert isru_response is not None
+            assert power_response is not None
+            assert thermal_response is not None
+
+            knowledge_context = self._build_knowledge_context(goal, evidence)
+
+            conflicts = self.coupling_checker.evaluate(
+                eclss=eclss_response,
+                isru=isru_response,
+                power=power_response,
+                thermal=thermal_response,
+                knowledge_context=knowledge_context,
+            )
+            if not conflicts:
+                break
+
+            if attempt < self.settings.max_replan_attempts:
+                current_reduction, goal, rationale, neg_round = await self._handle_replan_async(
                     goal,
                     conflicts,
                     current_reduction,

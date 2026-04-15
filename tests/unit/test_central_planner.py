@@ -4,6 +4,8 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio
+
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.orchestration import (
     CentralPlanner,
@@ -14,6 +16,7 @@ from mars_agent.orchestration import (
     MissionPhase,
     MitigationOption,
     PlannerSettings,
+    PlanResult,
     SpecialistTiming,
 )
 from mars_agent.orchestration.negotiation_store import (
@@ -61,6 +64,34 @@ def test_planner_generates_end_to_end_plan_for_large_colony() -> None:
     assert result.mission_id == "mars-colony-100"
     assert len(result.subsystem_responses) == 4
     assert result.next_phase in {MissionPhase.LANDING, MissionPhase.EARLY_OPERATIONS}
+
+
+def test_planner_async_matches_sync_outcome_shape() -> None:
+    planner = CentralPlanner()
+    goal = MissionGoal(
+        mission_id="mars-colony-async-shape",
+        crew_size=60,
+        horizon_years=4.0,
+        current_phase=MissionPhase.EARLY_OPERATIONS,
+        solar_generation_kw=900.0,
+        battery_capacity_kwh=16000.0,
+        dust_degradation_fraction=0.2,
+        hours_without_sun=18.0,
+        desired_confidence=0.9,
+    )
+
+    sync_result = planner.plan(goal=goal, evidence=_evidence())
+
+    async def _run_async() -> PlanResult:
+        return await planner.plan_async(goal=goal, evidence=_evidence())
+
+    async_result = anyio.run(_run_async)
+
+    assert sync_result.mission_id == async_result.mission_id
+    assert sync_result.started_phase == async_result.started_phase
+    assert sync_result.next_phase == async_result.next_phase
+    assert len(sync_result.subsystem_responses) == len(async_result.subsystem_responses)
+    assert len(sync_result.specialist_timings) == len(async_result.specialist_timings)
 
 
 def test_planner_surfaces_conflicts_with_mitigations_and_replans() -> None:

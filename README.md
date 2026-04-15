@@ -44,7 +44,7 @@ Then invoke `mars.plan` through the running MCP endpoint (for example `your_scri
 To disable injection:
 
 ```powershell
-Remove-Item Env:MARS_DEV_FAIL_SPECIALIST
+Remove-Item env:MARS_DEV_FAIL_SPECIALIST
 ```
 
 ## Start Docker-compose
@@ -117,7 +117,7 @@ Prerequisites: Docker Desktop must be running before either command.
 
 ## Next
 
-- Phase 10b — Add `AsyncOpenAI` async negotiation support (open for future phase).
+- Continue telemetry soak for `MARS_MCP_PLANNER_ASYNC=true` under production-like load before making it a default.
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
 ## MCP Error Payload Contract
@@ -168,6 +168,7 @@ The MCP server now emits structured observability signals while preserving the e
 - Progress notifications: best-effort MCP progress updates via FastMCP context APIs.
 - Client log notifications: best-effort info/error log messages emitted to MCP clients.
 - Metrics: lightweight in-process counters/timers (`calls`, `successes`, `failures`, `auth_failures`, `total_latency_ms`) kept internal for now.
+- `mars.telemetry.overview` also includes `plan_runtime` counters (`sync_calls`, `async_calls`) for `mars.plan` runtime-mode soak tracking.
 
 ## MCP Reliability Hardening (Workstream 4)
 
@@ -236,6 +237,15 @@ The MCP server now emits structured observability signals while preserving the e
 - Each call to `negotiate()` accepts `history: tuple[NegotiationRound, ...]`; prior rounds are injected into the LLM user message as a structured "Prior negotiation rounds" section.
 - `CentralPlanner.plan()` accumulates `negotiation_history` and passes it forward each replan iteration.
 - Unit tests exercise the LLM path via `MultiAgentNegotiator.__new__` + mock OpenAI client injection (no live API key required).
+
+### Phase 10c — Async negotiation rollout
+
+- Step 1 ✅ — Optional async negotiation path added behind `MARS_LLM_ORCHESTRATOR_ASYNC=true`.
+- Default behavior remains unchanged (sync negotiation) unless the async flag is explicitly enabled.
+- Async runtime errors fall back to sync negotiation path, preserving deterministic planner fallback behavior.
+- Async dispatch and fallback behavior is covered in `tests/unit/test_negotiator.py`.
+- Step 2 ✅ — Optional async planner path in MCP runtime is now available behind `MARS_MCP_PLANNER_ASYNC=true`.
+- With the flag enabled, `mars.plan` dispatches to `CentralPlanner.plan_async()` and keeps timeout/idempotency/error contracts unchanged.
 
 
 

@@ -1,5 +1,14 @@
 {% set health = overview["health"] %}
 {% set counts = overview["counts"] %}
+{% set runtime = plan_runtime %}
+{% set runtime_total = runtime["sync_calls"] + runtime["async_calls"] %}
+{% if runtime_total > 0 %}
+  {% set sync_ratio = ((runtime["sync_calls"] / runtime_total) * 100) | round(1) %}
+  {% set async_ratio = ((runtime["async_calls"] / runtime_total) * 100) | round(1) %}
+{% else %}
+  {% set sync_ratio = 0.0 %}
+  {% set async_ratio = 0.0 %}
+{% endif %}
 <div class="fragment" data-fragment="overview" data-fragment-required="schema_version,health,counts" data-fragment-allowed="schema_version,health,counts">
   <header class="card-head">
     <h2>Overview</h2>
@@ -30,6 +39,18 @@
     <div class="stat">
       <label>Failures</label>
       <strong>{{ counts["failures"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Plan Sync Calls</label>
+      <strong>{{ runtime["sync_calls"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Plan Async Calls</label>
+      <strong>{{ runtime["async_calls"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Plan Runtime Ratio</label>
+      <strong>{{ sync_ratio }}% / {{ async_ratio }}%</strong>
     </div>
   </div>
 </div>

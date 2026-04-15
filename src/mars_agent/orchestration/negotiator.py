@@ -1,5 +1,7 @@
 """Multi-agent negotiation module for resolving cross-domain coupling constraints."""
 
+import asyncio
+import importlib
 import json
 import logging
 import os
@@ -7,20 +9,24 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-try:
-    from openai import OpenAI
-    from openai.types.chat import ChatCompletionMessageParam
-    HAS_OPENAI = True
-except ImportError:
-    HAS_OPENAI = False
-    ChatCompletionMessageParam = object  # type: ignore[misc]
-
 from mars_agent.orchestration.models import (
     CrossDomainConflict,
     KnowledgeContext,
     MissionGoal,
 )
 from mars_agent.specialists.contracts import SpecialistCapability
+
+type ChatCompletionMessageParamT = dict[str, str]
+
+try:
+    _openai = importlib.import_module("openai")
+    OpenAI = _openai.OpenAI
+    AsyncOpenAI = _openai.AsyncOpenAI
+    HAS_OPENAI = True
+except (ImportError, AttributeError):
+    HAS_OPENAI = False
+    AsyncOpenAI = None
+    OpenAI = None
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +80,35 @@ class MultiAgentNegotiator:
 
     def __init__(self) -> None:
         self.is_enabled = os.environ.get("MARS_LLM_ORCHESTRATOR_ENABLED", "false").lower() == "true"
+        self.is_async_enabled = (
+            os.environ.get("MARS_LLM_ORCHESTRATOR_ASYNC", "false").lower() == "true"
+        )
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
         self.client = OpenAI(api_key=self.api_key) if HAS_OPENAI and self.api_key else None
+        self.async_client = (
+            AsyncOpenAI(api_key=self.api_key)
+            if HAS_OPENAI and self.api_key
+            else None
+        )
+
+    @staticmethod
+    def _disabled_result(current_reduction: float) -> tuple[bool, float, int, float, str]:
+        return False, current_reduction, 0, 0.0, "Negotiator disabled."
+
+    @staticmethod
+    def _result_from_json(
+        raw_json: str,
+        current_reduction: float,
+    ) -> tuple[bool, float, int, float, str]:
+        result_dict = json.loads(raw_json)
+        result = NegotiationResult(**result_dict)
+        return (
+            result.accepted,
+            result.isru_reduction_fraction,
+            result.crew_reduction,
+            result.dust_degradation_adjustment,
+            result.rationale,
+        )
 
     def _append_capability_preferences(
         self,
@@ -176,7 +209,7 @@ class MultiAgentNegotiator:
         history: tuple[NegotiationRound, ...],
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
-    ) -> list[ChatCompletionMessageParam]:
+    ) -> list[ChatCompletionMessageParamT]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
             f"- {c.severity.name}: {' vs '.join(s.name for s in c.impacted_subsystems)} "
@@ -236,7 +269,28 @@ class MultiAgentNegotiator:
         """
         if not self.is_enabled or not self.client:
             logger.debug("MultiAgentNegotiator is disabled or missing credentials. Skipping.")
-            return False, current_reduction, 0, 0.0, "Negotiator disabled."
+            return self._disabled_result(current_reduction)
+
+        if self.is_async_enabled and self.async_client is not None:
+            try:
+                async_result = asyncio.run(
+                    self.negotiate_async(
+                        goal=goal,
+                        conflicts=conflicts,
+                        current_reduction=current_reduction,
+                        history=history,
+                        capabilities=capabilities,
+                        knowledge_context=knowledge_context,
+                    )
+                )
+                if async_result[4] not in {
+                    "Negotiator error; see logs.",
+                    "Empty response from LLM.",
+                }:
+                    return async_result
+                logger.warning("Async negotiation returned error; falling back to sync path.")
+            except Exception:
+                logger.error("Async negotiation failed; falling back to sync path.", exc_info=True)
 
         logger.info("Triggering LLM multi-agent negotiation for %d conflicts.", len(conflicts))
 
@@ -258,18 +312,51 @@ class MultiAgentNegotiator:
             raw_json = response.choices[0].message.content
             if not raw_json:
                 return False, current_reduction, 0, 0.0, "Empty response from LLM."
-
-            result_dict = json.loads(raw_json)
-            result = NegotiationResult(**result_dict)
-
-            return (
-                result.accepted,
-                result.isru_reduction_fraction,
-                result.crew_reduction,
-                result.dust_degradation_adjustment,
-                result.rationale,
-            )
+            return self._result_from_json(raw_json, current_reduction)
 
         except Exception:
             logger.error("LLM negotiation failed.", exc_info=True)
+            return False, current_reduction, 0, 0.0, "Negotiator error; see logs."
+
+    async def negotiate_async(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        history: tuple[NegotiationRound, ...] = (),
+        capabilities: tuple[SpecialistCapability, ...] = (),
+        knowledge_context: KnowledgeContext | None = None,
+    ) -> tuple[bool, float, int, float, str]:
+        """Async variant of negotiate() used when async mode is enabled."""
+        if not self.is_enabled or self.async_client is None:
+            logger.debug("Async negotiator is disabled or missing credentials. Skipping.")
+            return self._disabled_result(current_reduction)
+
+        logger.info(
+            "Triggering ASYNC LLM multi-agent negotiation for %d conflicts.",
+            len(conflicts),
+        )
+
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=self._build_messages(
+                    goal,
+                    conflicts,
+                    current_reduction,
+                    history,
+                    capabilities,
+                    knowledge_context,
+                ),
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+
+            raw_json = response.choices[0].message.content
+            if not raw_json:
+                return False, current_reduction, 0, 0.0, "Empty response from LLM."
+            return self._result_from_json(raw_json, current_reduction)
+
+        except Exception:
+            logger.error("Async LLM negotiation failed.", exc_info=True)
             return False, current_reduction, 0, 0.0, "Negotiator error; see logs."

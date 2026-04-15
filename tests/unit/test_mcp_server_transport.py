@@ -1093,6 +1093,49 @@ def test_transport_direct_timeout_does_not_commit_state_and_allows_retry(
     assert len(mcp_server._adapter._plans) == before_count + 1
 
 
+def test_transport_direct_plan_uses_async_planner_path_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MARS_MCP_PLANNER_ASYNC", "true")
+
+    call_counts = {"sync": 0, "async": 0}
+    planner_cls = type(mcp_server._adapter.planner)
+    original_sync_plan = mcp_server._adapter.planner.plan
+
+    def _fail_sync_plan(
+        self: object,
+        *,
+        goal: MissionGoal,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> object:
+        call_counts["sync"] += 1
+        raise AssertionError("sync planner path should not run when async runtime is enabled")
+
+    async def _async_plan(
+        self: object,
+        *,
+        goal: MissionGoal,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> object:
+        call_counts["async"] += 1
+        return original_sync_plan(goal=goal, evidence=evidence)
+
+    monkeypatch.setattr(planner_cls, "plan", _fail_sync_plan)
+    monkeypatch.setattr(planner_cls, "plan_async", _async_plan)
+
+    result = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(_goal()),
+            evidence=_evidence_payload(_evidence()),
+            request_id="req-plan-async-runtime",
+        )
+    )
+
+    assert result["ok"] is True
+    assert call_counts["async"] == 1
+    assert call_counts["sync"] == 0
+
+
 def test_transport_stdio_full_pipeline_parity_matches_adapter() -> None:
     """Full 4-tool sequential pipeline over a single stdio session equals adapter.invoke()."""
     goal = _goal()

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from mars_agent.orchestration.models import (
     ConflictSeverity,
@@ -49,13 +50,34 @@ def _negotiator_with_mock_client(
     """Build an enabled negotiator whose client is a MagicMock."""
     negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
     negotiator.is_enabled = True
+    negotiator.is_async_enabled = False
     negotiator.api_key = "test-key"
     mock_client = MagicMock()
     mock_response = MagicMock()
     mock_response.choices[0].message.content = json.dumps(response_payload)
     mock_client.chat.completions.create.return_value = mock_response
     negotiator.client = mock_client
+    negotiator.async_client = None
     return negotiator, mock_client
+
+
+def _negotiator_with_async_mock_client(
+    response_payload: dict[str, Any],
+) -> tuple[MultiAgentNegotiator, MagicMock]:
+    negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
+    negotiator.is_enabled = True
+    negotiator.is_async_enabled = True
+    negotiator.api_key = "test-key"
+
+    mock_sync_client = MagicMock()
+    mock_async_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = json.dumps(response_payload)
+    mock_async_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    negotiator.client = mock_sync_client
+    negotiator.async_client = mock_async_client
+    return negotiator, mock_async_client
 
 
 def test_negotiate_disabled_returns_fallback() -> None:
@@ -63,8 +85,10 @@ def test_negotiate_disabled_returns_fallback() -> None:
     (False, unchanged_reduction, 'Negotiator disabled.')."""
     negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
     negotiator.is_enabled = False
+    negotiator.is_async_enabled = False
     negotiator.api_key = ""
     negotiator.client = None
+    negotiator.async_client = None
 
     accepted, reduction, crew_reduction, dust_adj, rationale = negotiator.negotiate(
         goal=_goal(),
@@ -221,3 +245,79 @@ def test_negotiate_includes_knowledge_context_in_system_prompt() -> None:
     assert "Knowledge context (retrieval hits)" in system_message
     assert "doc-123" in system_message
     assert "power:depends_on:battery" in system_message
+
+
+def test_negotiate_async_mode_uses_async_client() -> None:
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.22,
+        "crew_reduction": 1,
+        "dust_degradation_adjustment": 0.01,
+        "rationale": "Async path.",
+    }
+    negotiator, mock_async_client = _negotiator_with_async_mock_client(payload)
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+    )
+
+    assert accepted is True
+    assert isru == 0.22
+    assert crew == 1
+    assert dust == 0.01
+    assert rationale == "Async path."
+    assert mock_async_client.chat.completions.create.await_count == 1
+
+
+def test_negotiate_async_fallbacks_to_sync_on_async_error() -> None:
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.31,
+        "crew_reduction": 0,
+        "dust_degradation_adjustment": 0.0,
+        "rationale": "Sync fallback after async failure.",
+    }
+    negotiator, mock_sync_client = _negotiator_with_mock_client(payload)
+    negotiator.is_async_enabled = True
+
+    mock_async_client = MagicMock()
+    mock_async_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
+    negotiator.async_client = mock_async_client
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+    )
+
+    assert accepted is True
+    assert isru == 0.31
+    assert crew == 0
+    assert dust == 0.0
+    assert rationale == "Sync fallback after async failure."
+    assert mock_sync_client.chat.completions.create.call_count == 1
+
+
+def test_negotiate_async_direct_returns_disabled_when_not_enabled() -> None:
+    negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
+    negotiator.is_enabled = False
+    negotiator.is_async_enabled = True
+    negotiator.api_key = ""
+    negotiator.client = None
+    negotiator.async_client = None
+
+    accepted, reduction, crew_reduction, dust_adj, rationale = asyncio.run(
+        negotiator.negotiate_async(
+            goal=_goal(),
+            conflicts=(_conflict(),),
+            current_reduction=0.4,
+        )
+    )
+
+    assert accepted is False
+    assert reduction == 0.4
+    assert crew_reduction == 0
+    assert dust_adj == 0.0
+    assert rationale == "Negotiator disabled."
