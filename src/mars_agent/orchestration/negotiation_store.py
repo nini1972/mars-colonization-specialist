@@ -175,7 +175,8 @@ class NegotiationMemoryStore:
         with sqlite3.connect(str(self._db_path), timeout=2.0) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO negotiation_outcomes "
-                "(conflict_fingerprint, knowledge_fingerprint, isru_reduction_fraction, crew_reduction, "
+                "(conflict_fingerprint, knowledge_fingerprint, "
+                "isru_reduction_fraction, crew_reduction, "
                 "dust_degradation_adjustment, rationale, accepted, is_fallback, "
                 "stored_at, hit_count) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

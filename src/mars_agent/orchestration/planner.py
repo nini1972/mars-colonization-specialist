@@ -21,8 +21,8 @@ from mars_agent.orchestration.models import (
     PlannerSettings,
     PlanResult,
     ReadinessSignals,
-    RetrievedEvidence,
     ReplanEvent,
+    RetrievedEvidence,
     SpecialistTiming,
 )
 from mars_agent.orchestration.negotiation_store import (
@@ -471,15 +471,26 @@ class CentralPlanner:
 
         trust_samples: list[float] = [float(item.tier) for item in ranked_evidence]
         trust_samples.extend(
-            float(TrustTier[item.tier]) for item in retrieval_hits if item.tier in TrustTier.__members__
+            float(TrustTier[item.tier])
+            for item in retrieval_hits
+            if item.tier in TrustTier.__members__
         )
         if trust_samples:
-            normalized = sum(trust_samples) / (len(trust_samples) * float(TrustTier.AGENCY_STANDARD))
+            normalized = sum(trust_samples) / (
+                len(trust_samples) * float(TrustTier.AGENCY_STANDARD)
+            )
         else:
             normalized = 1.0
-        span = max(0.0, self.settings.max_knowledge_trust_weight - self.settings.min_knowledge_trust_weight)
+        span = max(
+            0.0,
+            self.settings.max_knowledge_trust_weight
+            - self.settings.min_knowledge_trust_weight,
+        )
         trust_weight = self.settings.min_knowledge_trust_weight + (normalized * span)
-        trust_weight = min(self.settings.max_knowledge_trust_weight, max(self.settings.min_knowledge_trust_weight, trust_weight))
+        trust_weight = min(
+            self.settings.max_knowledge_trust_weight,
+            max(self.settings.min_knowledge_trust_weight, trust_weight),
+        )
 
         return KnowledgeContext(
             top_evidence=ranked_evidence,
