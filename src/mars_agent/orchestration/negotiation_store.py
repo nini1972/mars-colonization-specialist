@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mars_agent.orchestration.models import CrossDomainConflict, MissionGoal
+from mars_agent.orchestration.models import CrossDomainConflict, KnowledgeContext, MissionGoal
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _DDL_METADATA = """
 CREATE TABLE IF NOT EXISTS metadata (
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 _DDL_OUTCOMES = """
 CREATE TABLE IF NOT EXISTS negotiation_outcomes (
     conflict_fingerprint        TEXT PRIMARY KEY,
+    knowledge_fingerprint       TEXT    NOT NULL DEFAULT '',
     isru_reduction_fraction     REAL    NOT NULL,
     crew_reduction              INTEGER NOT NULL,
     dust_degradation_adjustment REAL    NOT NULL,
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS negotiation_outcomes (
 def _conflict_fingerprint(
     goal: MissionGoal,
     conflicts: tuple[CrossDomainConflict, ...],
+    knowledge_context: KnowledgeContext | None = None,
 ) -> str:
     """Return the SHA-256 hex digest of a canonical conflict-situation representation.
 
@@ -54,6 +56,13 @@ def _conflict_fingerprint(
         "hours_without_sun": round(goal.hours_without_sun, 1),
         "conflicts": sorted(c.conflict_id for c in conflicts),
     }
+    if knowledge_context is not None:
+        payload["knowledge"] = {
+            "evidence_doc_ids": list(knowledge_context.evidence_doc_ids),
+            "ontology_hints": list(knowledge_context.ontology_hints),
+            "retrieval_doc_ids": [hit.doc_id for hit in knowledge_context.retrieval_hits],
+            "trust_weight": round(knowledge_context.trust_weight, 3),
+        }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -71,6 +80,7 @@ class NegotiationOutcome:
     is_fallback: bool  # True = deterministic fallback; False = LLM-accepted
     stored_at: str     # ISO-8601 datetime string
     hit_count: int
+    knowledge_fingerprint: str = ""
 
 
 class NegotiationMemoryStore:
@@ -120,7 +130,8 @@ class NegotiationMemoryStore:
     def _load_from_sqlite(self, db_path: Path) -> None:
         with sqlite3.connect(str(db_path), timeout=2.0) as conn:
             rows = conn.execute(
-                "SELECT conflict_fingerprint, isru_reduction_fraction, crew_reduction, "
+                "SELECT conflict_fingerprint, knowledge_fingerprint, "
+                "isru_reduction_fraction, crew_reduction, "
                 "dust_degradation_adjustment, rationale, accepted, is_fallback, "
                 "stored_at, hit_count "
                 "FROM negotiation_outcomes"
@@ -128,14 +139,15 @@ class NegotiationMemoryStore:
         for row in rows:
             outcome = NegotiationOutcome(
                 conflict_fingerprint=row[0],
-                isru_reduction_fraction=row[1],
-                crew_reduction=row[2],
-                dust_degradation_adjustment=row[3],
-                rationale=row[4],
-                accepted=bool(row[5]),
-                is_fallback=bool(row[6]),
-                stored_at=row[7],
-                hit_count=row[8],
+                knowledge_fingerprint=row[1],
+                isru_reduction_fraction=row[2],
+                crew_reduction=row[3],
+                dust_degradation_adjustment=row[4],
+                rationale=row[5],
+                accepted=bool(row[6]),
+                is_fallback=bool(row[7]),
+                stored_at=row[8],
+                hit_count=row[9],
             )
             self._cache[outcome.conflict_fingerprint] = outcome
 
@@ -163,12 +175,13 @@ class NegotiationMemoryStore:
         with sqlite3.connect(str(self._db_path), timeout=2.0) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO negotiation_outcomes "
-                "(conflict_fingerprint, isru_reduction_fraction, crew_reduction, "
+                "(conflict_fingerprint, knowledge_fingerprint, isru_reduction_fraction, crew_reduction, "
                 "dust_degradation_adjustment, rationale, accepted, is_fallback, "
                 "stored_at, hit_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     outcome.conflict_fingerprint,
+                    outcome.knowledge_fingerprint,
                     outcome.isru_reduction_fraction,
                     outcome.crew_reduction,
                     outcome.dust_degradation_adjustment,

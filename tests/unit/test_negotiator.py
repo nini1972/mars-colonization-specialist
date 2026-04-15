@@ -9,9 +9,11 @@ from unittest.mock import MagicMock
 from mars_agent.orchestration.models import (
     ConflictSeverity,
     CrossDomainConflict,
+    KnowledgeContext,
     MissionGoal,
     MissionPhase,
     MitigationOption,
+    RetrievedEvidence,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
 from mars_agent.specialists.contracts import Subsystem
@@ -186,3 +188,36 @@ def test_negotiate_includes_history_in_user_message() -> None:
     assert "30.0% reduction" in user_message
     assert "rejected" in user_message
     assert "Too low." in user_message
+
+
+def test_negotiate_includes_knowledge_context_in_system_prompt() -> None:
+    payload = {"accepted": True, "isru_reduction_fraction": 0.35, "rationale": "Use evidence."}
+    negotiator, mock_client = _negotiator_with_mock_client(payload)
+
+    knowledge_context = KnowledgeContext(
+        top_evidence=(),
+        retrieval_hits=(
+            RetrievedEvidence(
+                doc_id="doc-123",
+                title="Power headroom guidance",
+                tier="AGENCY_STANDARD",
+                score=0.88,
+                subsystem="power",
+            ),
+        ),
+        ontology_hints=("power:depends_on:battery",),
+        trust_weight=1.2,
+    )
+
+    negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.1,
+        knowledge_context=knowledge_context,
+    )
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    system_message = call_kwargs.kwargs["messages"][0]["content"]
+    assert "Knowledge context (retrieval hits)" in system_message
+    assert "doc-123" in system_message
+    assert "power:depends_on:battery" in system_message

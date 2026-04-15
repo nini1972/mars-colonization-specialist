@@ -43,6 +43,45 @@ class CrossDomainConflict:
     severity: ConflictSeverity
     impacted_subsystems: tuple[Subsystem, ...]
     mitigations: tuple[MitigationOption, ...]
+    evidence_doc_ids: tuple[str, ...] = ()
+    knowledge_signals: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedEvidence:
+    """Compact retrieval result used in planner negotiation context."""
+
+    doc_id: str
+    title: str
+    tier: str
+    score: float
+    subsystem: str
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeContext:
+    """Normalized knowledge context passed through conflict and negotiation flow."""
+
+    top_evidence: tuple[EvidenceReference, ...] = ()
+    retrieval_hits: tuple[RetrievedEvidence, ...] = ()
+    ontology_hints: tuple[str, ...] = ()
+    trust_weight: float = 1.0
+
+    @property
+    def evidence_doc_ids(self) -> tuple[str, ...]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for evidence_item in self.top_evidence:
+            if evidence_item.doc_id in seen:
+                continue
+            seen.add(evidence_item.doc_id)
+            ordered.append(evidence_item.doc_id)
+        for retrieval_item in self.retrieval_hits:
+            if retrieval_item.doc_id in seen:
+                continue
+            seen.add(retrieval_item.doc_id)
+            ordered.append(retrieval_item.doc_id)
+        return tuple(ordered)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +140,9 @@ class PlannerSettings:
     replan_feedstock_reduction: float = 0.2
     conflict_knob_overrides: dict[str, tuple[float, int, float]] = field(default_factory=dict)
     negotiation_store_path: str | None = None
+    max_knowledge_items: int = 5
+    min_knowledge_trust_weight: float = 1.0
+    max_knowledge_trust_weight: float = 1.3
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,7 +15,11 @@ except ImportError:
     HAS_OPENAI = False
     ChatCompletionMessageParam = object  # type: ignore[misc]
 
-from mars_agent.orchestration.models import CrossDomainConflict, MissionGoal
+from mars_agent.orchestration.models import (
+    CrossDomainConflict,
+    KnowledgeContext,
+    MissionGoal,
+)
 from mars_agent.specialists.contracts import SpecialistCapability
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,97 @@ class MultiAgentNegotiator:
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
         self.client = OpenAI(api_key=self.api_key) if HAS_OPENAI and self.api_key else None
 
+    def _append_capability_preferences(
+        self,
+        system_prompt: str,
+        capabilities: tuple[SpecialistCapability, ...],
+    ) -> str:
+        if not capabilities:
+            return system_prompt
+
+        supported_knobs = {
+            "isru_reduction_fraction",
+            "crew_reduction",
+            "dust_degradation_adjustment",
+        }
+        lines = ["\n\nSpecialist preferences (preferred step sizes per knob):"]
+        for cap in capabilities:
+            for knob in cap.tradeoff_knobs:
+                if knob.name not in supported_knobs or knob.preferred_delta <= 0.0:
+                    continue
+                lines.append(
+                    f"  [{cap.subsystem.upper()}] {knob.name}: "
+                    f"preferred_delta={knob.preferred_delta} {knob.unit}, "
+                    f"range [{knob.min_value}, {knob.max_value}] - {knob.description}"
+                )
+
+        return system_prompt + "\n".join(lines) if len(lines) > 1 else system_prompt
+
+    def _append_knowledge_context(
+        self,
+        system_prompt: str,
+        knowledge_context: KnowledgeContext | None,
+    ) -> str:
+        if knowledge_context is None:
+            return system_prompt
+
+        sections = self._knowledge_sections(knowledge_context)
+
+        if not sections:
+            return system_prompt
+
+        return (
+            system_prompt
+            + "\n\n"
+            + "\n\n".join(sections)
+            + "\n\nApply these knowledge signals conservatively and prioritize "
+            "higher trust tiers when trade-offs conflict."
+        )
+
+    def _knowledge_sections(self, knowledge_context: KnowledgeContext) -> list[str]:
+        sections: list[str] = []
+        if knowledge_context.top_evidence:
+            lines = ["Knowledge context (ranked evidence):"]
+            lines.extend(
+                f"  [{item.tier.name}] {item.doc_id}: {item.title} "
+                f"(relevance={item.relevance_score:.2f})"
+                for item in knowledge_context.top_evidence
+            )
+            sections.append("\n".join(lines))
+
+        if knowledge_context.retrieval_hits:
+            lines = ["Knowledge context (retrieval hits):"]
+            lines.extend(
+                f"  [{hit.tier}] {hit.doc_id}: {hit.title} "
+                f"(score={hit.score:.3f}, subsystem={hit.subsystem})"
+                for hit in knowledge_context.retrieval_hits
+            )
+            sections.append("\n".join(lines))
+
+        if knowledge_context.ontology_hints:
+            lines = ["Knowledge context (ontology hints):"]
+            lines.extend(f"  - {hint}" for hint in knowledge_context.ontology_hints)
+            sections.append("\n".join(lines))
+        return sections
+
+    def _history_section(self, history: tuple[NegotiationRound, ...]) -> str:
+        if not history:
+            return ""
+        lines = ["\n\nPrior negotiation rounds:"]
+        for item in history:
+            status = "accepted" if item.accepted else "rejected"
+            extras = []
+            if item.crew_reduction:
+                extras.append(f"crew_reduction={item.crew_reduction}")
+            if item.dust_degradation_adjustment:
+                extras.append(f"dust_adj={item.dust_degradation_adjustment:.3f}")
+            extra_str = f" [{', '.join(extras)}]" if extras else ""
+            lines.append(
+                f"  Round {item.round_num + 1}: {item.reduction_fraction * 100:.1f}%"
+                f" reduction{extra_str} -> {status}. {item.rationale}"
+            )
+        return "\n".join(lines)
+
     def _build_messages(
         self,
         goal: MissionGoal,
@@ -80,6 +175,7 @@ class MultiAgentNegotiator:
         current_reduction: float,
         history: tuple[NegotiationRound, ...],
         capabilities: tuple[SpecialistCapability, ...] = (),
+        knowledge_context: KnowledgeContext | None = None,
     ) -> list[ChatCompletionMessageParam]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
@@ -106,43 +202,9 @@ class MultiAgentNegotiator:
             "dust_degradation_adjustment must be 0.0–0.1."
         )
 
-        if capabilities:
-            supported_knobs = {
-                "isru_reduction_fraction",
-                "crew_reduction",
-                "dust_degradation_adjustment",
-            }
-            lines = ["\n\nSpecialist preferences (preferred step sizes per knob):"]
-            for cap in capabilities:
-                for knob in cap.tradeoff_knobs:
-                    if (
-                        knob.name in supported_knobs
-                        and knob.preferred_delta > 0.0
-                    ):
-                        lines.append(
-                            f"  [{cap.subsystem.upper()}] {knob.name}: "
-                            f"preferred_delta={knob.preferred_delta} {knob.unit}, "
-                            f"range [{knob.min_value}, {knob.max_value}] — {knob.description}"
-                        )
-            if len(lines) > 1:
-                system_prompt += "\n".join(lines)
-
-        history_section = ""
-        if history:
-            lines = ["\n\nPrior negotiation rounds:"]
-            for r in history:
-                status = "accepted" if r.accepted else "rejected"
-                extras = []
-                if r.crew_reduction:
-                    extras.append(f"crew_reduction={r.crew_reduction}")
-                if r.dust_degradation_adjustment:
-                    extras.append(f"dust_adj={r.dust_degradation_adjustment:.3f}")
-                extra_str = f" [{', '.join(extras)}]" if extras else ""
-                lines.append(
-                    f"  Round {r.round_num + 1}: {r.reduction_fraction * 100:.1f}%"
-                    f" reduction{extra_str} \u2192 {status}. {r.rationale}"
-                )
-            history_section = "\n".join(lines)
+        system_prompt = self._append_capability_preferences(system_prompt, capabilities)
+        system_prompt = self._append_knowledge_context(system_prompt, knowledge_context)
+        history_section = self._history_section(history)
 
         user_prompt = (
             f"Mission Goal: {goal.crew_size} crew, Phase: {goal.current_phase.name}.\n"
@@ -166,6 +228,7 @@ class MultiAgentNegotiator:
         current_reduction: float,
         history: tuple[NegotiationRound, ...] = (),
         capabilities: tuple[SpecialistCapability, ...] = (),
+        knowledge_context: KnowledgeContext | None = None,
     ) -> tuple[bool, float, int, float, str]:
         """
         Executes a multi-agent negotiation loop to resolve specific conflicts.
@@ -181,7 +244,12 @@ class MultiAgentNegotiator:
             response = self.client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=self._build_messages(
-                    goal, conflicts, current_reduction, history, capabilities
+                    goal,
+                    conflicts,
+                    current_reduction,
+                    history,
+                    capabilities,
+                    knowledge_context,
                 ),
                 response_format={"type": "json_object"},
                 temperature=0.2,

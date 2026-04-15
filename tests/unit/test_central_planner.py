@@ -9,6 +9,7 @@ from mars_agent.orchestration import (
     CentralPlanner,
     ConflictSeverity,
     CrossDomainConflict,
+    KnowledgeContext,
     MissionGoal,
     MissionPhase,
     MitigationOption,
@@ -145,11 +146,17 @@ def _make_conflict(
     )
 
 
+def _knowledge_context(weight: float = 1.0) -> KnowledgeContext:
+    return KnowledgeContext(top_evidence=_evidence(), trust_weight=weight)
+
+
 def test_conflict_aware_fallback_isru_only_for_power_shortfall() -> None:
     planner = CentralPlanner()
     conflicts = (_make_conflict("coupling.power_balance.shortfall"),)
     new_reduction, crew_delta, dust_delta, rationale = planner._conflict_aware_fallback(
-        conflicts, current_reduction=0.0
+        conflicts,
+        current_reduction=0.0,
+        knowledge_context=_knowledge_context(),
     )
     assert new_reduction == 0.05
     assert crew_delta == 0
@@ -161,7 +168,9 @@ def test_conflict_aware_fallback_margin_low_applies_crew_reduction() -> None:
     planner = CentralPlanner()
     conflicts = (_make_conflict("coupling.power_margin.low", ConflictSeverity.MEDIUM),)
     new_reduction, crew_delta, dust_delta, _ = planner._conflict_aware_fallback(
-        conflicts, current_reduction=0.1
+        conflicts,
+        current_reduction=0.1,
+        knowledge_context=_knowledge_context(),
     )
     assert abs(new_reduction - 0.13) < 1e-9
     assert crew_delta == 1
@@ -175,7 +184,9 @@ def test_conflict_aware_fallback_combines_shortfall_and_isru_share() -> None:
         _make_conflict("coupling.isru_power_share.high", ConflictSeverity.MEDIUM),
     )
     new_reduction, crew_delta, dust_delta, _ = planner._conflict_aware_fallback(
-        conflicts, current_reduction=0.0
+        conflicts,
+        current_reduction=0.0,
+        knowledge_context=_knowledge_context(),
     )
     # max(0.05, 0.05) = 0.05 ISRU; max(0, 0) = 0 crew; max(0.0, 0.02) = 0.02 dust
     assert new_reduction == 0.05
@@ -188,7 +199,9 @@ def test_conflict_aware_fallback_unknown_id_uses_default() -> None:
     planner = CentralPlanner(settings=settings)
     conflicts = (_make_conflict("coupling.unknown.mystery_conflict"),)
     new_reduction, crew_delta, dust_delta, _ = planner._conflict_aware_fallback(
-        conflicts, current_reduction=0.0
+        conflicts,
+        current_reduction=0.0,
+        knowledge_context=_knowledge_context(),
     )
     assert new_reduction == 0.15
     assert crew_delta == 0
@@ -235,7 +248,8 @@ def test_cache_hit_produces_memory_hit_rationale() -> None:
     """When a pre-populated cache entry exists, _handle_replan returns a [memory hit] rationale."""
     goal = _constrained_goal()
     conflicts = (_make_conflict("coupling.power_balance.shortfall"),)
-    fp = _conflict_fingerprint(goal, conflicts)
+    context = _knowledge_context()
+    fp = _conflict_fingerprint(goal, conflicts, context)
 
     seeded_outcome = NegotiationOutcome(
         conflict_fingerprint=fp,
@@ -252,10 +266,11 @@ def test_cache_hit_produces_memory_hit_rationale() -> None:
     store.store(seeded_outcome)
 
     planner = CentralPlanner(negotiation_store=store)
-    new_reduction, _updated_goal, rationale, neg_round = planner._handle_replan(
+    new_reduction, _updated_goal, rationale, _ = planner._handle_replan(
         goal=goal,
         conflicts=conflicts,
         current_reduction=0.0,
+        knowledge_context=context,
     )
 
     assert "[memory hit]" in rationale
@@ -304,10 +319,16 @@ def test_is_fallback_true_when_negotiator_disabled() -> None:
     goal = _constrained_goal()
     conflicts = (_make_conflict("coupling.power_balance.shortfall"),)
 
+    context = _knowledge_context()
     planner = CentralPlanner(negotiation_store=store)
-    planner._handle_replan(goal=goal, conflicts=conflicts, current_reduction=0.0)
+    planner._handle_replan(
+        goal=goal,
+        conflicts=conflicts,
+        current_reduction=0.0,
+        knowledge_context=context,
+    )
 
-    fp = _conflict_fingerprint(goal, conflicts)
+    fp = _conflict_fingerprint(goal, conflicts, context)
     cached = store.lookup(fp)
     assert cached is not None
     assert cached.is_fallback is True

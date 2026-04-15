@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from mars_agent.orchestration.models import (
     ConflictSeverity,
     CrossDomainConflict,
+    KnowledgeContext,
     MitigationOption,
 )
 from mars_agent.specialists.contracts import ModuleResponse, Subsystem
@@ -17,8 +18,10 @@ from mars_agent.specialists.contracts import ModuleResponse, Subsystem
 
 
 def _thermal_shortfall_conflict(
-    combined: float, effective_generation: float
+    combined: float, effective_generation: float, context: KnowledgeContext | None = None
 ) -> CrossDomainConflict:
+    signals = context.ontology_hints if context is not None else ()
+    evidence_doc_ids = context.evidence_doc_ids if context is not None else ()
     return CrossDomainConflict(
         conflict_id="coupling.power_balance.thermal_shortfall",
         description=(
@@ -39,12 +42,18 @@ def _thermal_shortfall_conflict(
             MitigationOption(2, "Improve habitat insulation to lower HVAC power demand"),
             MitigationOption(3, "Increase dispatchable generation capacity"),
         ),
+        evidence_doc_ids=evidence_doc_ids,
+        knowledge_signals=signals,
     )
 
 
 def _power_shortfall_conflict(
-    total_critical_load: float, effective_generation: float
+    total_critical_load: float,
+    effective_generation: float,
+    context: KnowledgeContext | None = None,
 ) -> CrossDomainConflict:
+    signals = context.ontology_hints if context is not None else ()
+    evidence_doc_ids = context.evidence_doc_ids if context is not None else ()
     return CrossDomainConflict(
         conflict_id="coupling.power_balance.shortfall",
         description=(
@@ -60,12 +69,18 @@ def _power_shortfall_conflict(
             ),
             MitigationOption(3, "Increase dispatchable generation capacity"),
         ),
+        evidence_doc_ids=evidence_doc_ids,
+        knowledge_signals=signals,
     )
 
 
 def _isru_power_share_conflict(
-    isru_load: float, effective_generation: float
+    isru_load: float,
+    effective_generation: float,
+    context: KnowledgeContext | None = None,
 ) -> CrossDomainConflict:
+    signals = context.ontology_hints if context is not None else ()
+    evidence_doc_ids = context.evidence_doc_ids if context is not None else ()
     return CrossDomainConflict(
         conflict_id="coupling.isru_power_share.high",
         description=(
@@ -78,10 +93,17 @@ def _isru_power_share_conflict(
             MitigationOption(1, "Shift ISRU processing to peak generation windows"),
             MitigationOption(2, "Improve ISRU reactor efficiency before scale-up"),
         ),
+        evidence_doc_ids=evidence_doc_ids,
+        knowledge_signals=signals,
     )
 
 
-def _power_margin_conflict(load_margin: float) -> CrossDomainConflict:
+def _power_margin_conflict(
+    load_margin: float,
+    context: KnowledgeContext | None = None,
+) -> CrossDomainConflict:
+    signals = context.ontology_hints if context is not None else ()
+    evidence_doc_ids = context.evidence_doc_ids if context is not None else ()
     return CrossDomainConflict(
         conflict_id="coupling.power_margin.low",
         description=(
@@ -95,10 +117,14 @@ def _power_margin_conflict(load_margin: float) -> CrossDomainConflict:
             ),
             MitigationOption(2, "Reduce discretionary habitat loads during storms"),
         ),
+        evidence_doc_ids=evidence_doc_ids,
+        knowledge_signals=signals,
     )
 
 
-def _power_gate_conflict() -> CrossDomainConflict:
+def _power_gate_conflict(context: KnowledgeContext | None = None) -> CrossDomainConflict:
+    signals = context.ontology_hints if context is not None else ()
+    evidence_doc_ids = context.evidence_doc_ids if context is not None else ()
     return CrossDomainConflict(
         conflict_id="coupling.power_gate.failed",
         description=(
@@ -112,6 +138,8 @@ def _power_gate_conflict() -> CrossDomainConflict:
                 2, "Raise storage and generation reserves before operations"
             ),
         ),
+        evidence_doc_ids=evidence_doc_ids,
+        knowledge_signals=signals,
     )
 
 
@@ -130,6 +158,7 @@ class CouplingChecker:
         isru: ModuleResponse,
         power: ModuleResponse,
         thermal: ModuleResponse | None = None,
+        knowledge_context: KnowledgeContext | None = None,
     ) -> tuple[CrossDomainConflict, ...]:
         conflicts: list[CrossDomainConflict] = []
 
@@ -145,20 +174,30 @@ class CouplingChecker:
 
         combined = eclss_load + isru_load + thermal_load
         if thermal is not None and combined > effective_generation:
-            conflicts.append(_thermal_shortfall_conflict(combined, effective_generation))
+            conflicts.append(
+                _thermal_shortfall_conflict(combined, effective_generation, knowledge_context)
+            )
 
         total_critical_load = eclss_load + isru_load
         if total_critical_load > effective_generation:
-            conflicts.append(_power_shortfall_conflict(total_critical_load, effective_generation))
+            conflicts.append(
+                _power_shortfall_conflict(
+                    total_critical_load,
+                    effective_generation,
+                    knowledge_context,
+                )
+            )
 
         if isru_load > 0.6 * max(effective_generation, 1e-6):
-            conflicts.append(_isru_power_share_conflict(isru_load, effective_generation))
+            conflicts.append(
+                _isru_power_share_conflict(isru_load, effective_generation, knowledge_context)
+            )
 
         if load_margin < 5.0:
-            conflicts.append(_power_margin_conflict(load_margin))
+            conflicts.append(_power_margin_conflict(load_margin, knowledge_context))
 
         if not power.gate.accepted:
-            conflicts.append(_power_gate_conflict())
+            conflicts.append(_power_gate_conflict(knowledge_context))
 
         return tuple(conflicts)
 

@@ -9,14 +9,19 @@ from pathlib import Path
 from time import perf_counter
 from typing import Protocol
 
+from mars_agent.knowledge.models import SearchQuery, TrustTier
+from mars_agent.knowledge.ontology import OntologyStore
+from mars_agent.knowledge.retrieval import RetrievalIndex
 from mars_agent.orchestration.coupling import CouplingChecker
 from mars_agent.orchestration.models import (
     CrossDomainConflict,
+    KnowledgeContext,
     MissionGoal,
     MissionPhase,
     PlannerSettings,
     PlanResult,
     ReadinessSignals,
+    RetrievedEvidence,
     ReplanEvent,
     SpecialistTiming,
 )
@@ -135,6 +140,8 @@ class CentralPlanner:
     settings: PlannerSettings = field(default_factory=PlannerSettings)
     negotiator: MultiAgentNegotiator = field(default_factory=MultiAgentNegotiator)
     negotiation_store: NegotiationMemoryStore = field(default_factory=NegotiationMemoryStore)
+    retrieval_index: RetrievalIndex | None = None
+    ontology_store: OntologyStore | None = None
 
     def __post_init__(self) -> None:
         if self.settings.negotiation_store_path is not None:
@@ -412,10 +419,80 @@ class CentralPlanner:
         )
         return (eclss_response, isru_response, power_response, thermal_response), timings
 
+    def _build_knowledge_context(
+        self,
+        goal: MissionGoal,
+        evidence: tuple[EvidenceReference, ...],
+    ) -> KnowledgeContext:
+        """Build a bounded, trust-weighted knowledge context for this planning attempt."""
+        max_items = max(1, self.settings.max_knowledge_items)
+        ranked_evidence = tuple(
+            sorted(
+                evidence,
+                key=lambda item: (float(item.tier), item.relevance_score),
+                reverse=True,
+            )[:max_items]
+        )
+
+        retrieval_hits: tuple[RetrievedEvidence, ...] = ()
+        if self.retrieval_index is not None:
+            query = SearchQuery(
+                text=(
+                    f"{goal.current_phase.value} mission power thermal isru eclss "
+                    "conflict mitigation"
+                ),
+                mission=goal.mission_id,
+                min_tier=TrustTier.PEER_REVIEWED,
+                top_k=max_items,
+            )
+            hits = self.retrieval_index.search(query)
+            retrieval_hits = tuple(
+                RetrievedEvidence(
+                    doc_id=hit.doc_id,
+                    title=hit.title,
+                    tier=hit.tier.name,
+                    score=hit.score,
+                    subsystem=hit.subsystem,
+                )
+                for hit in hits
+            )
+
+        ontology_hints: tuple[str, ...] = ()
+        if self.ontology_store is not None:
+            hints: list[str] = []
+            for entity in ("power", "isru", "eclss", "thermal"):
+                for edge in self.ontology_store.neighbors(entity):
+                    if len(hints) >= max_items:
+                        break
+                    hints.append(f"{edge.subject}:{edge.predicate}:{edge.object}")
+                if len(hints) >= max_items:
+                    break
+            ontology_hints = tuple(hints)
+
+        trust_samples: list[float] = [float(item.tier) for item in ranked_evidence]
+        trust_samples.extend(
+            float(TrustTier[item.tier]) for item in retrieval_hits if item.tier in TrustTier.__members__
+        )
+        if trust_samples:
+            normalized = sum(trust_samples) / (len(trust_samples) * float(TrustTier.AGENCY_STANDARD))
+        else:
+            normalized = 1.0
+        span = max(0.0, self.settings.max_knowledge_trust_weight - self.settings.min_knowledge_trust_weight)
+        trust_weight = self.settings.min_knowledge_trust_weight + (normalized * span)
+        trust_weight = min(self.settings.max_knowledge_trust_weight, max(self.settings.min_knowledge_trust_weight, trust_weight))
+
+        return KnowledgeContext(
+            top_evidence=ranked_evidence,
+            retrieval_hits=retrieval_hits,
+            ontology_hints=ontology_hints,
+            trust_weight=trust_weight,
+        )
+
     def _conflict_aware_fallback(
         self,
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
+        knowledge_context: KnowledgeContext | None = None,
     ) -> tuple[float, int, float, str]:
         """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
 
@@ -443,6 +520,7 @@ class CentralPlanner:
         isru_delta = 0.0
         crew_delta = 0
         dust_delta = 0.0
+        trust_weight = knowledge_context.trust_weight if knowledge_context is not None else 1.0
         named: list[str] = []
         for conflict in conflicts:
             cid = conflict.conflict_id
@@ -455,9 +533,12 @@ class CentralPlanner:
                 d_isru = max(cap_isru_delta, self.settings.replan_feedstock_reduction)
                 d_crew = 0
                 d_dust = 0.0
-            isru_delta = max(isru_delta, d_isru)
-            crew_delta = max(crew_delta, d_crew)
-            dust_delta = max(dust_delta, d_dust)
+            weighted_isru = d_isru * trust_weight
+            weighted_crew = int(round(d_crew * trust_weight))
+            weighted_dust = d_dust * trust_weight
+            isru_delta = max(isru_delta, weighted_isru)
+            crew_delta = max(crew_delta, weighted_crew)
+            dust_delta = max(dust_delta, weighted_dust)
             named.append(cid)
         new_isru_reduction = min(0.8, current_reduction + isru_delta)
         crew_delta = min(5, crew_delta)
@@ -465,7 +546,8 @@ class CentralPlanner:
         conflict_list = ", ".join(named) if named else "none"
         rationale = (
             f"Conflict-aware fallback for [{conflict_list}]: "
-            f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f}."
+            f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f} "
+            f"(knowledge_weight={trust_weight:.2f})."
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
 
@@ -474,10 +556,11 @@ class CentralPlanner:
         goal: MissionGoal,
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
+        knowledge_context: KnowledgeContext,
         history: tuple[NegotiationRound, ...] = (),
     ) -> tuple[float, MissionGoal, str, NegotiationRound]:
         """Negotiate or fall back; return (new_reduction, updated_goal, rationale, round)."""
-        fingerprint = _conflict_fingerprint(goal, conflicts)
+        fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
             new_reduction = min(0.8, max(current_reduction, cached.isru_reduction_fraction))
@@ -497,6 +580,7 @@ class CentralPlanner:
                     is_fallback=cached.is_fallback,
                     stored_at=cached.stored_at,
                     hit_count=cached.hit_count + 1,
+                    knowledge_fingerprint=fingerprint,
                 )
             )
         else:
@@ -507,12 +591,17 @@ class CentralPlanner:
                     current_reduction=current_reduction,
                     history=history,
                     capabilities=self.registry.all_capabilities(),
+                    knowledge_context=knowledge_context,
                 )
             )
             is_fallback: bool
             if not accepted:
                 new_reduction, crew_reduction, dust_adj, rationale = (
-                    self._conflict_aware_fallback(conflicts, current_reduction)
+                    self._conflict_aware_fallback(
+                        conflicts,
+                        current_reduction,
+                        knowledge_context,
+                    )
                 )
                 is_fallback = True
             else:
@@ -528,6 +617,7 @@ class CentralPlanner:
                     is_fallback=is_fallback,
                     stored_at=now_utc_iso(),
                     hit_count=0,
+                    knowledge_fingerprint=fingerprint,
                 )
             )
         final_reduction = max(current_reduction, new_reduction)
@@ -621,18 +711,25 @@ class CentralPlanner:
             assert power_response is not None
             assert thermal_response is not None
 
+            knowledge_context = self._build_knowledge_context(goal, evidence)
+
             conflicts = self.coupling_checker.evaluate(
                 eclss=eclss_response,
                 isru=isru_response,
                 power=power_response,
                 thermal=thermal_response,
+                knowledge_context=knowledge_context,
             )
             if not conflicts:
                 break
 
             if attempt < self.settings.max_replan_attempts:
                 current_reduction, goal, rationale, neg_round = self._handle_replan(
-                    goal, conflicts, current_reduction, history=tuple(negotiation_history)
+                    goal,
+                    conflicts,
+                    current_reduction,
+                    knowledge_context,
+                    history=tuple(negotiation_history),
                 )
                 negotiation_history.append(neg_round)
                 replan_events.append(ReplanEvent(attempt=attempt + 1, reason=rationale))

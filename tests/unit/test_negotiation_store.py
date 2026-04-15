@@ -64,6 +64,7 @@ def _outcome(
         is_fallback=is_fallback,
         stored_at="2026-04-12T00:00:00+00:00",
         hit_count=hit_count,
+        knowledge_fingerprint=fingerprint,
     )
 
 
@@ -85,6 +86,7 @@ def test_in_memory_round_trip() -> None:
     assert result.conflict_fingerprint == fp
     assert result.isru_reduction_fraction == 0.1
     assert result.is_fallback is False
+    assert result.knowledge_fingerprint == fp
 
 
 def test_unknown_fingerprint_returns_none() -> None:

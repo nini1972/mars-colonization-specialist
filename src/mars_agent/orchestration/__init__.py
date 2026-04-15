@@ -4,6 +4,7 @@ from mars_agent.orchestration.coupling import CouplingChecker
 from mars_agent.orchestration.models import (
     ConflictSeverity,
     CrossDomainConflict,
+    KnowledgeContext,
     MissionGoal,
     MissionPhase,
     MitigationOption,
@@ -11,6 +12,7 @@ from mars_agent.orchestration.models import (
     PlanningContext,
     PlanResult,
     ReadinessSignals,
+    RetrievedEvidence,
     ReplanEvent,
     SpecialistTiming,
 )
@@ -27,6 +29,7 @@ __all__ = [
     "ConflictSeverity",
     "CouplingChecker",
     "CrossDomainConflict",
+    "KnowledgeContext",
     "MissionGoal",
     "MissionPhase",
     "MissionPhaseStateMachine",
@@ -37,6 +40,7 @@ __all__ = [
     "PlannerSettings",
     "PlanningContext",
     "ReadinessSignals",
+    "RetrievedEvidence",
     "ReplanEvent",
     "SpecialistRegistry",
     "SpecialistTiming",
