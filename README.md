@@ -201,6 +201,7 @@ The MCP server now emits structured observability signals while preserving the e
 
 - Server-rendered dashboard stack: FastAPI + Jinja2 templates + HTMX fragments + Alpine.js micro-state.
 - UI schema version: `1.0` exposed in page and JSON endpoint responses for operator/debug clarity.
+- Overview panel includes `Plan Sync Calls`, `Plan Async Calls`, and `Plan Runtime Ratio` (`sync% / async%`) derived from `plan_runtime` counters.
 - Main page route: `/dashboard`
 - JSON API route: `/api/telemetry/dashboard`
 - Fragment routes:
