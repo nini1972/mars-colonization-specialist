@@ -96,4 +96,18 @@ No public API changes — plan() remains synchronous, all 112 tests pass, Codacy
 
 Parallelism profile: On CPython the GIL will still serialize pure-Python math tightly, but the architecture is now correct — any I/O (LLM calls, DB lookups, external sensors) a specialist adds in the future will immediately benefit from true concurrency at no extra cost.
 
+Latest Alignment Update (Phase 10c Step 3)
+
+- Async planner soak automation is now implemented and documented:
+	- Local harness: `scripts/soak_planner.py`
+	- PowerShell wrapper: `scripts/soak-planner.ps1`
+	- Deterministic comparison envelope: `--mode both --requests 240 --concurrency 24 --timeout-seconds 20`
+	- Artifact output contract: `data/processed/planner-soak-local.json` (local) and `data/processed/planner-soak-ci.json` (CI)
+- CI trend job is now in place:
+	- Workflow: `.github/workflows/ci.yml`
+	- Job: `planner-soak-trend`
+	- Upload artifact name: `planner-soak-ci`
+
+Operational intent: keep sync vs async planner performance and reliability comparable over time, and support staged rollout decisions for `MARS_MCP_PLANNER_ASYNC=true` with artifact-backed trend evidence.
+
 Claude Sonnet 4.6 • 1x

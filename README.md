@@ -114,11 +114,30 @@ Prerequisites: Docker Desktop must be running before either command.
 - Track C ✅ — Specialist capability protocol: `TradeoffKnob` frozen dataclass (`name`, `description`, `min_value`, `max_value`, `preferred_delta`, `unit`; validated on `__post_init__`) and `SpecialistCapability` frozen dataclass (`subsystem`, `accepts_inputs`, `produces_metrics`, `tradeoff_knobs`) added to `contracts.py`; all four specialists implement `capabilities()` — ECLSS exposes `crew_reduction` (0–5, Δ=1) and `recycle_efficiency` (0.75–0.98, Δ=0.02); ISRU exposes `isru_reduction_fraction` (0–0.8, Δ=0.05) and `reactor_efficiency` (0.4–0.95, Δ=0.02); Power exposes `dust_degradation_adjustment` (0–0.1, Δ=0.02); HabitatThermodynamics exposes `thermal_power_budget_reduction` (0–20 kW, Δ=2.0); `SpecialistRegistry` (NEW `src/mars_agent/orchestration/registry.py`) is a runtime catalogue keyed by `Subsystem` — `register()` (raises `ValueError` on duplicate), `get()`, `all_capabilities()`, `subsystems()`, `SpecialistRegistry.default()` pre-populates all four (addresses gap #6); `CentralPlanner.registry` field replaces hardcoded specialist fields; `_conflict_aware_fallback()` queries `registry.all_capabilities()` for unknown-conflict ISRU delta; `_handle_replan()` passes `registry.all_capabilities()` to `MultiAgentNegotiator.negotiate()` (addresses gap #3); `MultiAgentNegotiator._build_messages()` appends a "Specialist preferences" section to the LLM system prompt when capabilities are provided; `tests/unit/test_specialist_capabilities.py` (NEW) — 21 test functions (24 test cases with parametrize) covering `TradeoffKnob` validation, per-specialist `capabilities()` correctness, `accepts_inputs` coverage, `SpecialistRegistry` CRUD, planner–registry integration, and negotiator message building; 159 tests passing. See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
 - Track F ✅ — Specialist health and graceful degradation: per-specialist exceptions are isolated inside `CentralPlanner._run_modules()` while ECLSS, ISRU, and HabitatThermodynamics still fan out in parallel; Power is skipped with a structured reason when ECLSS or ISRU fails upstream. `SpecialistTiming` now records `failed` and `failure_reason`; `PlanResult` gains `degraded`, returns only successful subsystem responses, skips coupling evaluation, and keeps `next_phase` at `goal.current_phase` on degraded plans. `mars.plan` now surfaces `degraded` and `specialist_faults`; specialist telemetry adds `fault_count` and `last_failed`; the Agent Health dashboard adds a Faults column plus an amber fault status. 11 new unit tests (7 planner + 4 dashboard); 170 tests passing. See [issue #13](https://github.com/nini1972/mars-colonization-specialist/issues/13).
 - Track G ✅ — Knowledge-informed coordination: planner now builds a bounded `KnowledgeContext` from mission evidence, retrieval hits (`RetrievalIndex`), and ontology hints (`OntologyStore`) and threads it through conflict detection, negotiation, fallback, and negotiation memory. `CouplingChecker.evaluate()` attaches knowledge metadata (`evidence_doc_ids`, `knowledge_signals`) to emitted conflicts; `MultiAgentNegotiator._build_messages()` includes structured knowledge sections in the system prompt; `_conflict_aware_fallback()` scales conflict knob deltas using trust-weighted knowledge context while retaining safety clamps; conflict fingerprints now incorporate normalized knowledge context to avoid stale cache replays.
+- Phase 10c Step 3 ✅ — Async planner soak automation: deterministic soak harness added (`scripts/soak_planner.py`) with PowerShell runner (`scripts/soak-planner.ps1`) for sync/async comparison under identical parameters; new CI job `planner-soak-trend` in `.github/workflows/ci.yml` runs `--mode both --requests 240 --concurrency 24` and uploads `data/processed/planner-soak-ci.json` as artifact `planner-soak-ci` for trend comparison across runs.
 
 ## Next
 
 - Continue telemetry soak for `MARS_MCP_PLANNER_ASYNC=true` under production-like load before making it a default.
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
+
+## Async planner soak (local first)
+
+Run deterministic soak locally, then repeat in CI with the same parameters.
+
+```powershell
+./scripts/soak-planner.ps1 -Mode both -Requests 240 -Concurrency 24 -ResetRuntimeState
+```
+
+To include a persisted report artifact:
+
+```powershell
+./scripts/soak-planner.ps1 -Mode both -Requests 240 -Concurrency 24 -PersistenceBackend sqlite -SqlitePath .\.mars_mcp_runtime.soak.sqlite3 -OutputPath .\data\processed\planner-soak-local.json -ResetRuntimeState
+```
+
+The script runs the same deterministic scenario set in sync and async planner modes (`MARS_MCP_PLANNER_ASYNC`) and prints p50/p95/p99 latency, throughput, failure rate, degraded-plan rate, and runtime counter deltas.
+
+CI runs the same soak parameter envelope in `.github/workflows/ci.yml` (job: `planner-soak-trend`) and uploads `planner-soak-ci` to support historical trend inspection.
 
 ## MCP Error Payload Contract
 

@@ -43,3 +43,37 @@ Provide baseline triage workflow for MCP runtime observability during Phase 9B W
 - `deadline_exceeded`: inspect timeout config and tool execution duration.
 - `unauthenticated` / `forbidden`: inspect auth token and permission mapping.
 - Persistence degradation: verify backend contract and fallback policy from Phase 9A.
+
+## Phase 10c Async Planner Soak
+
+Use local docker-compose first, then CI with identical parameters.
+
+### Execution
+
+1. Start from a clean runtime state.
+- `./scripts/soak-planner.ps1 -Mode both -Requests 240 -Concurrency 24 -ResetRuntimeState`
+
+2. Run backend-specific validation with persisted artifact.
+- `./scripts/soak-planner.ps1 -Mode both -Requests 240 -Concurrency 24 -PersistenceBackend sqlite -SqlitePath .\.mars_mcp_runtime.soak.sqlite3 -OutputPath .\data\processed\planner-soak-local.json -ResetRuntimeState`
+
+3. Repeat in CI with the same `Requests` and `Concurrency` values for comparable trend lines.
+
+### What gets measured
+
+- Throughput (`throughput_rps`)
+- Latency (`avg`, `p50`, `p95`, `p99`, `max`)
+- Failure count and `error_rate`
+- Degraded-plan count and `degraded_rate`
+- Runtime-mode deltas (`sync_calls`, `async_calls`)
+
+### Go/no-go guidance
+
+- Async mode should keep `error_rate` at or below sync baseline.
+- Async mode should not regress p95/p99 latency beyond agreed tolerance.
+- No idempotency contract drift: request handling remains stable under repeated load.
+- No persistence degradation or corruption signals when running with sqlite backend.
+
+### Rollout policy
+
+- Use staged rollout for `MARS_MCP_PLANNER_ASYNC=true` after soak passes.
+- Keep rollback path ready by restoring `MARS_MCP_PLANNER_ASYNC` to unset/false.
