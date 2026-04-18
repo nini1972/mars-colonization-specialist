@@ -226,7 +226,11 @@ class MultiAgentNegotiator:
         messages: list[ChatCompletionMessageParamT],
         current_reduction: float,
     ) -> tuple[bool, float, int, float, str]:
-        response = self.client.chat.completions.create(
+        if self.client is None:
+            return self._disabled_result(current_reduction)
+        client = self.client
+
+        response = client.chat.completions.create(
             **self._build_chat_completions_kwargs(messages)
         )
         raw_json = self._extract_chat_completions_output_text(response)
@@ -239,7 +243,11 @@ class MultiAgentNegotiator:
         messages: list[ChatCompletionMessageParamT],
         current_reduction: float,
     ) -> tuple[bool, float, int, float, str]:
-        response = await self.async_client.chat.completions.create(
+        if self.async_client is None:
+            return self._disabled_result(current_reduction)
+        async_client = self.async_client
+
+        response = await async_client.chat.completions.create(
             **self._build_chat_completions_kwargs(messages)
         )
         raw_json = self._extract_chat_completions_output_text(response)
@@ -252,7 +260,11 @@ class MultiAgentNegotiator:
         messages: list[ChatCompletionMessageParamT],
         current_reduction: float,
     ) -> tuple[bool, float, int, float, str]:
-        response = self.client.responses.create(**self._build_responses_kwargs(messages))
+        if self.client is None:
+            return self._disabled_result(current_reduction)
+        client = self.client
+
+        response = client.responses.create(**self._build_responses_kwargs(messages))
         raw_json = self._extract_responses_output_text(response)
         if not raw_json:
             return False, current_reduction, 0, 0.0, "Empty response from LLM."
@@ -263,7 +275,11 @@ class MultiAgentNegotiator:
         messages: list[ChatCompletionMessageParamT],
         current_reduction: float,
     ) -> tuple[bool, float, int, float, str]:
-        response = await self.async_client.responses.create(
+        if self.async_client is None:
+            return self._disabled_result(current_reduction)
+        async_client = self.async_client
+
+        response = await async_client.responses.create(
             **self._build_responses_kwargs(messages)
         )
         raw_json = self._extract_responses_output_text(response)
