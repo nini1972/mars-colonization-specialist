@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -829,6 +832,120 @@ def test_agents_fragment_required_keys_present(
     response = client.get("/dashboard/fragments/agents")
     assert response.status_code == 200
     assert 'data-fragment-required="agents,ui_schema_version"' in response.text
+
+
+# ---------------------------------------------------------------------------
+# Planner soak overview panel
+# ---------------------------------------------------------------------------
+
+
+def test_soak_overview_fragment_unavailable_without_artifact(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard_app, "_DEFAULT_SOAK_REPORT_CANDIDATES", tuple())
+    monkeypatch.delenv("MARS_DASHBOARD_SOAK_REPORT_PATH", raising=False)
+
+    response = client.get("/dashboard/fragments/soak-overview")
+
+    assert response.status_code == 200
+    assert "No soak report artifact found yet" in response.text
+
+
+def test_soak_overview_fragment_renders_table_when_artifact_present(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    soak_path = tmp_path / "planner-soak-ci.json"
+    soak_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "config": {
+                    "mode": "both",
+                    "requests": 240,
+                    "concurrency": 24,
+                    "timeout_seconds": 20.0,
+                    "persistence_backend": "sqlite",
+                    "sqlite_path": ".mars_mcp_runtime.soak.sqlite3",
+                    "reset_runtime_state": True,
+                },
+                "results": [
+                    {
+                        "mode": "sync",
+                        "requests": 240,
+                        "concurrency": 24,
+                        "elapsed_seconds": 2.5,
+                        "throughput_rps": 96.0,
+                        "successes": 240,
+                        "failures": 0,
+                        "error_rate": 0.0,
+                        "degraded_count": 0,
+                        "degraded_rate": 0.0,
+                        "latency_ms": {
+                            "avg": 14.0,
+                            "p50": 12.0,
+                            "p95": 23.0,
+                            "p99": 29.0,
+                            "max": 32.0,
+                        },
+                        "runtime_counter_delta": {"sync_calls": 240.0, "async_calls": 0.0},
+                        "error_types": {},
+                    },
+                    {
+                        "mode": "async",
+                        "requests": 240,
+                        "concurrency": 24,
+                        "elapsed_seconds": 2.4,
+                        "throughput_rps": 100.0,
+                        "successes": 240,
+                        "failures": 0,
+                        "error_rate": 0.0,
+                        "degraded_count": 0,
+                        "degraded_rate": 0.0,
+                        "latency_ms": {
+                            "avg": 13.0,
+                            "p50": 11.0,
+                            "p95": 21.0,
+                            "p99": 27.0,
+                            "max": 30.0,
+                        },
+                        "runtime_counter_delta": {"sync_calls": 0.0, "async_calls": 240.0},
+                        "error_types": {},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MARS_DASHBOARD_SOAK_REPORT_PATH", str(soak_path))
+
+    response = client.get("/dashboard/fragments/soak-overview")
+
+    assert response.status_code == 200
+    assert "Planner Soak Overview" in response.text
+    assert ">sync<" in response.text
+    assert ">async<" in response.text
+    assert ">96.0<" in response.text
+    assert ">100.0<" in response.text
+    assert "Updated:" in response.text
+    assert "toLocaleString" in response.text
+
+
+def test_soak_overview_fragment_invalid_payload_shows_warning(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bad_path = tmp_path / "invalid-soak.json"
+    bad_path.write_text('{"not":"valid"}', encoding="utf-8")
+    monkeypatch.setenv("MARS_DASHBOARD_SOAK_REPORT_PATH", str(bad_path))
+
+    response = client.get("/dashboard/fragments/soak-overview")
+
+    assert response.status_code == 200
+    assert "invalid" in response.text.lower()
 
 
 # ---------------------------------------------------------------------------

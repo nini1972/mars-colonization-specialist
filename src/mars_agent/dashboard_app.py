@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -31,6 +32,12 @@ UI_SCHEMA_VERSION: Final[str] = "1.0"
 _BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _BASE_DIR / "web" / "templates"
 _STATIC_DIR = _BASE_DIR / "web" / "static"
+_WORKSPACE_ROOT = _BASE_DIR.parent.parent
+_SOAK_REPORT_PATH_ENV = "MARS_DASHBOARD_SOAK_REPORT_PATH"
+_DEFAULT_SOAK_REPORT_CANDIDATES: Final[tuple[Path, ...]] = (
+    _WORKSPACE_ROOT / "data" / "processed" / "planner-soak-local.json",
+    _WORKSPACE_ROOT / "data" / "processed" / "planner-soak-ci.json",
+)
 
 _DEMO_RECORDS: Final[list[dict[str, object]]] = [
     {
@@ -452,6 +459,170 @@ def _build_agents_panel() -> list[dict[str, object]]:
     return rows
 
 
+def _resolve_soak_report_path() -> Path | None:
+    configured = os.getenv(_SOAK_REPORT_PATH_ENV)
+    if configured:
+        return Path(configured)
+
+    existing = [path for path in _DEFAULT_SOAK_REPORT_CANDIDATES if path.exists()]
+    if not existing:
+        return None
+
+    return max(existing, key=lambda path: path.stat().st_mtime)
+
+
+def _read_soak_payload(path: Path) -> Mapping[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("invalid soak payload: expected mapping")
+    _validate_exact_keys(
+        payload,
+        required={"schema_version", "config", "results"},
+        allowed={
+            "schema_version",
+            "config",
+            "results",
+            "telemetry_overview",
+            "plan_runtime_metrics",
+        },
+        label="soak_report",
+    )
+    config = _ensure_mapping(payload["config"], label="soak_report.config")
+    _validate_exact_keys(
+        config,
+        required={
+            "mode",
+            "requests",
+            "concurrency",
+            "timeout_seconds",
+            "persistence_backend",
+            "sqlite_path",
+            "reset_runtime_state",
+        },
+        allowed={
+            "mode",
+            "requests",
+            "concurrency",
+            "timeout_seconds",
+            "persistence_backend",
+            "sqlite_path",
+            "reset_runtime_state",
+        },
+        label="soak_report.config",
+    )
+    results = payload["results"]
+    if not isinstance(results, list):
+        raise ValueError("invalid soak payload: results must be a list")
+    for item in results:
+        entry = _ensure_mapping(item, label="soak_report.results.item")
+        _validate_exact_keys(
+            entry,
+            required={
+                "mode",
+                "requests",
+                "concurrency",
+                "elapsed_seconds",
+                "throughput_rps",
+                "successes",
+                "failures",
+                "error_rate",
+                "degraded_count",
+                "degraded_rate",
+                "latency_ms",
+                "runtime_counter_delta",
+                "error_types",
+            },
+            allowed={
+                "mode",
+                "requests",
+                "concurrency",
+                "elapsed_seconds",
+                "throughput_rps",
+                "successes",
+                "failures",
+                "error_rate",
+                "degraded_count",
+                "degraded_rate",
+                "latency_ms",
+                "runtime_counter_delta",
+                "error_types",
+            },
+            label="soak_report.results.item",
+        )
+    return payload
+
+
+def _build_planner_soak_overview() -> dict[str, object]:
+    report_path = _resolve_soak_report_path()
+    if report_path is None:
+        return {
+            "status": "unavailable",
+            "reason": "No soak report artifact found yet.",
+            "report_path": None,
+        }
+
+    if not report_path.exists():
+        return {
+            "status": "unavailable",
+            "reason": f"Configured soak report path does not exist: {report_path}",
+            "report_path": str(report_path),
+        }
+
+    try:
+        payload = _read_soak_payload(report_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "status": "invalid",
+            "reason": str(exc),
+            "report_path": str(report_path),
+        }
+
+    config = _ensure_mapping(payload["config"], label="soak_report.config")
+    results = cast(list[Mapping[str, object]], payload["results"])
+    by_mode = {
+        str(item.get("mode", "")): item
+        for item in results
+        if isinstance(item, Mapping)
+    }
+    sync_result = by_mode.get("sync")
+    async_result = by_mode.get("async")
+
+    def _metric(source: Mapping[str, object] | None, key: str) -> object:
+        if source is None:
+            return "n/a"
+        return source.get(key, "n/a")
+
+    def _latency(source: Mapping[str, object] | None, key: str) -> object:
+        if source is None:
+            return "n/a"
+        latency = source.get("latency_ms")
+        if not isinstance(latency, Mapping):
+            return "n/a"
+        return latency.get(key, "n/a")
+
+    return {
+        "status": "available",
+        "schema_version": payload.get("schema_version"),
+        "report_path": str(report_path),
+        "last_modified": report_path.stat().st_mtime,
+        "config": dict(config),
+        "sync": {
+            "throughput_rps": _metric(sync_result, "throughput_rps"),
+            "error_rate": _metric(sync_result, "error_rate"),
+            "degraded_rate": _metric(sync_result, "degraded_rate"),
+            "p95_ms": _latency(sync_result, "p95"),
+            "p99_ms": _latency(sync_result, "p99"),
+        },
+        "async": {
+            "throughput_rps": _metric(async_result, "throughput_rps"),
+            "error_rate": _metric(async_result, "error_rate"),
+            "degraded_rate": _metric(async_result, "degraded_rate"),
+            "p95_ms": _latency(async_result, "p95"),
+            "p99_ms": _latency(async_result, "p99"),
+        },
+    }
+
+
 def _build_dag_nodes(
     present: set[str],
     ordered: list[dict[str, object]],
@@ -670,6 +841,19 @@ def agents_fragment(request: Request) -> HTMLResponse:
         context={
             "ui_schema_version": UI_SCHEMA_VERSION,
             "agents": rows,
+        },
+    )
+
+
+@app.get("/dashboard/fragments/soak-overview", response_class=HTMLResponse)
+def soak_overview_fragment(request: Request) -> HTMLResponse:
+    soak = _build_planner_soak_overview()
+    return templates.TemplateResponse(
+        request=request,
+        name="fragments/soak_overview.html",
+        context={
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "soak": soak,
         },
     )
 

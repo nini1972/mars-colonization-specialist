@@ -1,0 +1,80 @@
+<div class="fragment" data-fragment="soak-overview" data-fragment-required="ui_schema_version,soak" data-fragment-allowed="ui_schema_version,soak">
+  <header class="card-head">
+    <h2>Planner Soak Overview</h2>
+    <span class="pill">Artifact-driven</span>
+  </header>
+
+  {% if soak["status"] == "available" %}
+  <p class="muted">Source: {{ soak["report_path"] }}</p>
+  <p class="muted">
+    Updated:
+    <span
+      x-data="{ ts: {{ soak['last_modified'] }} }"
+      x-text="new Date(ts * 1000).toLocaleString()"
+    >{{ soak["last_modified"] }}</span>
+  </p>
+
+  {% set config = soak["config"] %}
+  <div class="stats">
+    <div class="stat">
+      <label>Mode</label>
+      <strong>{{ config["mode"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Requests</label>
+      <strong>{{ config["requests"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Concurrency</label>
+      <strong>{{ config["concurrency"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Timeout (s)</label>
+      <strong>{{ config["timeout_seconds"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Backend</label>
+      <strong>{{ config["persistence_backend"] }}</strong>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>Throughput (rps)</th>
+        <th>Error Rate</th>
+        <th>Degraded Rate</th>
+        <th>p95 (ms)</th>
+        <th>p99 (ms)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>sync</td>
+        <td>{{ soak["sync"]["throughput_rps"] }}</td>
+        <td>{{ soak["sync"]["error_rate"] }}</td>
+        <td>{{ soak["sync"]["degraded_rate"] }}</td>
+        <td>{{ soak["sync"]["p95_ms"] }}</td>
+        <td>{{ soak["sync"]["p99_ms"] }}</td>
+      </tr>
+      <tr>
+        <td>async</td>
+        <td>{{ soak["async"]["throughput_rps"] }}</td>
+        <td>{{ soak["async"]["error_rate"] }}</td>
+        <td>{{ soak["async"]["degraded_rate"] }}</td>
+        <td>{{ soak["async"]["p95_ms"] }}</td>
+        <td>{{ soak["async"]["p99_ms"] }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% elif soak["status"] == "invalid" %}
+  <div class="banner banner-warn" role="status">
+    Soak artifact is present but invalid.
+  </div>
+  <p class="muted">{{ soak["reason"] }}</p>
+  <p class="muted">Source: {{ soak["report_path"] }}</p>
+  {% else %}
+  <p class="muted">{{ soak["reason"] }}</p>
+  {% endif %}
+</div>

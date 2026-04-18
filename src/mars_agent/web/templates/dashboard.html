@@ -99,4 +99,8 @@
 <article class="card" id="agents-panel" hx-get="/dashboard/fragments/agents" hx-trigger="load, every 30s" hx-swap="innerHTML">
   <div class="skeleton">Loading agent health...</div>
 </article>
+
+<article class="card" id="soak-overview-panel" hx-get="/dashboard/fragments/soak-overview" hx-trigger="load, every 60s" hx-swap="innerHTML">
+  <div class="skeleton">Loading planner soak overview...</div>
+</article>
 {% endblock %}
