@@ -34,13 +34,13 @@ When using Docker/docker-compose, the env var is already defaulted to sqlite in 
 Dev-only failure injection (for dashboard degraded-path testing):
 
 ```powershell
+$env:MARS_DASHBOARD_SOAK_REPORT_PATH = ".\data\processed\planner-soak-ci.json"
 $env:MARS_DEV_FAIL_SPECIALIST = "eclss"   # eclss | isru | power | habitat_thermodynamics
 docker compose up --build
 ```
 
 Then invoke `mars.plan` through the running MCP endpoint (for example `your_script.py`) and confirm the dashboard Agent Health panel shows a fault (`status-warn`) and increased fault count.
 .\.venv\Scripts\python.exe .\your_script.py
-
 To disable injection:
 
 ```powershell
@@ -78,6 +78,7 @@ Then rebuild:
 docker compose up --build
 # or
 ./scripts/docker-build.ps1
+
 
 SQLite persistence is auto-configured in both paths — the container stores the .sqlite3 file in the mars_data named Docker volume at /data/mars_mcp_runtime.sqlite3. The "persistence degraded" warning will not appear when running via Docker.
 
