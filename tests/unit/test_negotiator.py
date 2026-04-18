@@ -53,11 +53,19 @@ def _negotiator_with_mock_client(
     negotiator.is_async_enabled = False
     negotiator.api_key = "test-key"
     mock_client = MagicMock()
+    message = MagicMock()
+    message.content = json.dumps(response_payload)
+    choice = MagicMock()
+    choice.message = message
     mock_response = MagicMock()
-    mock_response.choices[0].message.content = json.dumps(response_payload)
+    mock_response.choices = [choice]
     mock_client.chat.completions.create.return_value = mock_response
+    mock_client.responses.create = MagicMock(
+        side_effect=RuntimeError("responses not configured")
+    )
     negotiator.client = mock_client
     negotiator.async_client = None
+    negotiator.use_responses_api = False
     return negotiator, mock_client
 
 
@@ -71,9 +79,62 @@ def _negotiator_with_async_mock_client(
 
     mock_sync_client = MagicMock()
     mock_async_client = MagicMock()
+    message = MagicMock()
+    message.content = json.dumps(response_payload)
+    choice = MagicMock()
+    choice.message = message
     mock_response = MagicMock()
-    mock_response.choices[0].message.content = json.dumps(response_payload)
+    mock_response.choices = [choice]
     mock_async_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    mock_async_client.responses.create = AsyncMock(
+        side_effect=RuntimeError("responses not configured")
+    )
+
+    negotiator.client = mock_sync_client
+    negotiator.async_client = mock_async_client
+    negotiator.use_responses_api = False
+    return negotiator, mock_async_client
+
+
+def _negotiator_with_responses_client(
+    response_payload: dict[str, Any],
+) -> tuple[MultiAgentNegotiator, MagicMock]:
+    negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
+    negotiator.is_enabled = True
+    negotiator.is_async_enabled = False
+    negotiator.api_key = "test-key"
+    negotiator.use_responses_api = True
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.output_text = json.dumps(response_payload)
+    mock_client.responses.create.return_value = mock_response
+    mock_client.chat.completions.create = MagicMock(
+        side_effect=AssertionError("fallback should not run")
+    )
+
+    negotiator.client = mock_client
+    negotiator.async_client = None
+    return negotiator, mock_client
+
+
+def _negotiator_with_async_responses_client(
+    response_payload: dict[str, Any],
+) -> tuple[MultiAgentNegotiator, MagicMock]:
+    negotiator = MultiAgentNegotiator.__new__(MultiAgentNegotiator)
+    negotiator.is_enabled = True
+    negotiator.is_async_enabled = True
+    negotiator.api_key = "test-key"
+    negotiator.use_responses_api = True
+
+    mock_sync_client = MagicMock()
+    mock_async_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.output_text = json.dumps(response_payload)
+    mock_async_client.responses.create = AsyncMock(return_value=mock_response)
+    mock_async_client.chat.completions.create = AsyncMock(
+        side_effect=AssertionError("fallback should not run")
+    )
 
     negotiator.client = mock_sync_client
     negotiator.async_client = mock_async_client
@@ -321,3 +382,77 @@ def test_negotiate_async_direct_returns_disabled_when_not_enabled() -> None:
     assert crew_reduction == 0
     assert dust_adj == 0.0
     assert rationale == "Negotiator disabled."
+
+
+def test_negotiate_prefers_responses_api_when_enabled() -> None:
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.26,
+        "crew_reduction": 1,
+        "dust_degradation_adjustment": 0.02,
+        "rationale": "Responses path.",
+    }
+    negotiator, mock_client = _negotiator_with_responses_client(payload)
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.1,
+    )
+
+    assert accepted is True
+    assert isru == 0.26
+    assert crew == 1
+    assert dust == 0.02
+    assert rationale == "Responses path."
+    assert mock_client.responses.create.call_count == 1
+
+
+def test_negotiate_falls_back_to_chat_completions_when_responses_errors() -> None:
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.44,
+        "crew_reduction": 0,
+        "dust_degradation_adjustment": 0.0,
+        "rationale": "Fallback chat path.",
+    }
+    negotiator, mock_client = _negotiator_with_mock_client(payload)
+    negotiator.use_responses_api = True
+    mock_client.responses.create = MagicMock(side_effect=RuntimeError("responses unavailable"))
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+    )
+
+    assert accepted is True
+    assert isru == 0.44
+    assert crew == 0
+    assert dust == 0.0
+    assert rationale == "Fallback chat path."
+    assert mock_client.chat.completions.create.call_count == 1
+
+
+def test_negotiate_async_prefers_responses_api_when_enabled() -> None:
+    payload = {
+        "accepted": True,
+        "isru_reduction_fraction": 0.29,
+        "crew_reduction": 2,
+        "dust_degradation_adjustment": 0.01,
+        "rationale": "Async responses path.",
+    }
+    negotiator, mock_async_client = _negotiator_with_async_responses_client(payload)
+
+    accepted, isru, crew, dust, rationale = negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+    )
+
+    assert accepted is True
+    assert isru == 0.29
+    assert crew == 2
+    assert dust == 0.01
+    assert rationale == "Async responses path."
+    assert mock_async_client.responses.create.await_count == 1

@@ -44,7 +44,7 @@ Then invoke `mars.plan` through the running MCP endpoint (for example `your_scri
 To disable injection:
 
 ```powershell
-Remove-Item env:MARS_DEV_FAIL_SPECIALIST
+Remove-Item $env:MARS_DEV_FAIL_SPECIALIST
 ```
 
 ## Start Docker-compose
@@ -267,6 +267,11 @@ The MCP server now emits structured observability signals while preserving the e
 - Async dispatch and fallback behavior is covered in `tests/unit/test_negotiator.py`.
 - Step 2 ✅ — Optional async planner path in MCP runtime is now available behind `MARS_MCP_PLANNER_ASYNC=true`.
 - With the flag enabled, `mars.plan` dispatches to `CentralPlanner.plan_async()` and keeps timeout/idempotency/error contracts unchanged.
+- Step 3 ✅ — OpenAI dual-path negotiation calls are now enabled in `MultiAgentNegotiator`:
+  - Primary path: OpenAI Responses API (`client.responses.create`) for sync and async modes.
+  - Fallback path: OpenAI Chat Completions (`client.chat.completions.create`) when Responses API is unavailable, returns empty output, or errors.
+  - Runtime toggle: `MARS_LLM_OPENAI_USE_RESPONSES=true|false` (default `true`) to force legacy Chat Completions when needed.
+  - Migration reference: https://developers.openai.com/api/docs/guides/migrate-to-responses
 
 
 
@@ -286,4 +291,3 @@ The MCP server now emits structured observability signals while preserving the e
 | D | Persistent negotiation memory — resolved conflict patterns persisted to SQLite for cross-mission reuse | ✅ Done (125 tests passing) |
 | E | Agent health panel in dashboard — per-specialist call count, avg latency, and last outcome fragment | ✅ Done (133 tests passing) |
 | F | Specialist health and graceful degradation — isolate per-specialist failures, emit degraded plans, and surface fault telemetry in MCP and dashboard | ✅ Done (170 tests passing) |
-

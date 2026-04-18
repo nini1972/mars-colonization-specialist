@@ -5,6 +5,8 @@ import importlib
 import json
 import logging
 import os
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
@@ -83,6 +85,9 @@ class MultiAgentNegotiator:
         self.is_async_enabled = (
             os.environ.get("MARS_LLM_ORCHESTRATOR_ASYNC", "false").lower() == "true"
         )
+        self.use_responses_api = (
+            os.environ.get("MARS_LLM_OPENAI_USE_RESPONSES", "true").lower() == "true"
+        )
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
         self.client = OpenAI(api_key=self.api_key) if HAS_OPENAI and self.api_key else None
         self.async_client = (
@@ -90,6 +95,8 @@ class MultiAgentNegotiator:
             if HAS_OPENAI and self.api_key
             else None
         )
+        # TODO(phase-11): Migrate Chat Completions calls to the OpenAI Responses API.
+        # Reference: https://developers.openai.com/api/docs/guides/migrate-to-responses
 
     @staticmethod
     def _disabled_result(current_reduction: float) -> tuple[bool, float, int, float, str]:
@@ -100,7 +107,7 @@ class MultiAgentNegotiator:
         raw_json: str,
         current_reduction: float,
     ) -> tuple[bool, float, int, float, str]:
-        result_dict = json.loads(raw_json)
+        result_dict = json.loads(MultiAgentNegotiator._extract_json_object(raw_json))
         result = NegotiationResult(**result_dict)
         return (
             result.accepted,
@@ -109,6 +116,160 @@ class MultiAgentNegotiator:
             result.dust_degradation_adjustment,
             result.rationale,
         )
+
+    @staticmethod
+    def _extract_json_object(raw_text: str) -> str:
+        text = raw_text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\\s*", "", text)
+            text = re.sub(r"\\s*```$", "", text)
+
+        try:
+            json.loads(text)
+            return text
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                candidate = text[start : end + 1]
+                json.loads(candidate)
+                return candidate
+            raise
+
+    @staticmethod
+    def _extract_text_value(value: object) -> str | None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped if stripped else None
+        return None
+
+    def _extract_responses_output_text(self, response: object) -> str | None:
+        output_text = self._extract_text_value(getattr(response, "output_text", None))
+        if output_text is not None:
+            return output_text
+
+        if isinstance(response, Mapping):
+            mapping_text = self._extract_text_value(response.get("output_text"))
+            if mapping_text is not None:
+                return mapping_text
+
+        output = getattr(response, "output", None)
+        if output is None and isinstance(response, Mapping):
+            output = response.get("output")
+        if not isinstance(output, list):
+            return None
+
+        chunks: list[str] = []
+        for item in output:
+            content = getattr(item, "content", None)
+            if content is None and isinstance(item, Mapping):
+                content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                text_value = getattr(part, "text", None)
+                if text_value is None and isinstance(part, Mapping):
+                    text_value = part.get("text")
+                resolved = self._extract_text_value(text_value)
+                if resolved is not None:
+                    chunks.append(resolved)
+        return "\n".join(chunks) if chunks else None
+
+    def _extract_chat_completions_output_text(self, response: object) -> str | None:
+        choices = getattr(response, "choices", None)
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            message = getattr(first, "message", None)
+            content = getattr(message, "content", None)
+            resolved = self._extract_text_value(content)
+            if resolved is not None:
+                return resolved
+
+        if isinstance(response, Mapping):
+            choices_raw = response.get("choices")
+            if isinstance(choices_raw, list) and choices_raw:
+                first = choices_raw[0]
+                if isinstance(first, Mapping):
+                    message = first.get("message")
+                    if isinstance(message, Mapping):
+                        resolved = self._extract_text_value(message.get("content"))
+                        if resolved is not None:
+                            return resolved
+        return None
+
+    def _build_chat_completions_kwargs(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+    ) -> dict[str, object]:
+        return {
+            "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+        }
+
+    def _build_responses_kwargs(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+    ) -> dict[str, object]:
+        return {
+            "model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            "input": messages,
+            "temperature": 0.2,
+        }
+
+    def _responses_enabled(self) -> bool:
+        return bool(getattr(self, "use_responses_api", True))
+
+    def _negotiate_via_chat_completions(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+        current_reduction: float,
+    ) -> tuple[bool, float, int, float, str]:
+        response = self.client.chat.completions.create(
+            **self._build_chat_completions_kwargs(messages)
+        )
+        raw_json = self._extract_chat_completions_output_text(response)
+        if not raw_json:
+            return False, current_reduction, 0, 0.0, "Empty response from LLM."
+        return self._result_from_json(raw_json, current_reduction)
+
+    async def _negotiate_via_chat_completions_async(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+        current_reduction: float,
+    ) -> tuple[bool, float, int, float, str]:
+        response = await self.async_client.chat.completions.create(
+            **self._build_chat_completions_kwargs(messages)
+        )
+        raw_json = self._extract_chat_completions_output_text(response)
+        if not raw_json:
+            return False, current_reduction, 0, 0.0, "Empty response from LLM."
+        return self._result_from_json(raw_json, current_reduction)
+
+    def _negotiate_via_responses(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+        current_reduction: float,
+    ) -> tuple[bool, float, int, float, str]:
+        response = self.client.responses.create(**self._build_responses_kwargs(messages))
+        raw_json = self._extract_responses_output_text(response)
+        if not raw_json:
+            return False, current_reduction, 0, 0.0, "Empty response from LLM."
+        return self._result_from_json(raw_json, current_reduction)
+
+    async def _negotiate_via_responses_async(
+        self,
+        messages: list[ChatCompletionMessageParamT],
+        current_reduction: float,
+    ) -> tuple[bool, float, int, float, str]:
+        response = await self.async_client.responses.create(
+            **self._build_responses_kwargs(messages)
+        )
+        raw_json = self._extract_responses_output_text(response)
+        if not raw_json:
+            return False, current_reduction, 0, 0.0, "Empty response from LLM."
+        return self._result_from_json(raw_json, current_reduction)
 
     def _append_capability_preferences(
         self,
@@ -295,24 +456,25 @@ class MultiAgentNegotiator:
         logger.info("Triggering LLM multi-agent negotiation for %d conflicts.", len(conflicts))
 
         try:
-            response = self.client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=self._build_messages(
-                    goal,
-                    conflicts,
-                    current_reduction,
-                    history,
-                    capabilities,
-                    knowledge_context,
-                ),
-                response_format={"type": "json_object"},
-                temperature=0.2,
+            messages = self._build_messages(
+                goal,
+                conflicts,
+                current_reduction,
+                history,
+                capabilities,
+                knowledge_context,
             )
 
-            raw_json = response.choices[0].message.content
-            if not raw_json:
-                return False, current_reduction, 0, 0.0, "Empty response from LLM."
-            return self._result_from_json(raw_json, current_reduction)
+            if self._responses_enabled() and hasattr(self.client, "responses"):
+                try:
+                    return self._negotiate_via_responses(messages, current_reduction)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Responses API negotiation failed; falling back to Chat Completions.",
+                        exc_info=True,
+                    )
+
+            return self._negotiate_via_chat_completions(messages, current_reduction)
 
         except Exception:
             logger.error("LLM negotiation failed.", exc_info=True)
@@ -338,24 +500,25 @@ class MultiAgentNegotiator:
         )
 
         try:
-            response = await self.async_client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=self._build_messages(
-                    goal,
-                    conflicts,
-                    current_reduction,
-                    history,
-                    capabilities,
-                    knowledge_context,
-                ),
-                response_format={"type": "json_object"},
-                temperature=0.2,
+            messages = self._build_messages(
+                goal,
+                conflicts,
+                current_reduction,
+                history,
+                capabilities,
+                knowledge_context,
             )
 
-            raw_json = response.choices[0].message.content
-            if not raw_json:
-                return False, current_reduction, 0, 0.0, "Empty response from LLM."
-            return self._result_from_json(raw_json, current_reduction)
+            if self._responses_enabled() and hasattr(self.async_client, "responses"):
+                try:
+                    return await self._negotiate_via_responses_async(messages, current_reduction)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Async Responses API negotiation failed; falling back to Chat Completions.",
+                        exc_info=True,
+                    )
+
+            return await self._negotiate_via_chat_completions_async(messages, current_reduction)
 
         except Exception:
             logger.error("Async LLM negotiation failed.", exc_info=True)
