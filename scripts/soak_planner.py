@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 import os
@@ -19,7 +20,14 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from mars_agent.mcp import server as mcp_server
+_SERVER_MODULE = None
+
+
+def _server_module():
+    global _SERVER_MODULE
+    if _SERVER_MODULE is None:
+        _SERVER_MODULE = importlib.import_module("mars_agent.mcp.server")
+    return _SERVER_MODULE
 
 _PLANNER_ASYNC_ENV: Final[str] = "MARS_MCP_PLANNER_ASYNC"
 _PERSISTENCE_BACKEND_ENV: Final[str] = "MARS_MCP_PERSISTENCE_BACKEND"
@@ -144,6 +152,7 @@ def _set_async_mode(async_enabled: bool) -> None:
 
 
 def _reset_runtime_state(*, sqlite_path: Path, persistence_backend: str) -> None:
+    mcp_server = _server_module()
     if persistence_backend == "sqlite" and sqlite_path.exists():
         sqlite_path.unlink()
 
@@ -187,6 +196,7 @@ async def _invoke_plan(
     goal: dict[str, object],
     timeout_seconds: float,
 ) -> InvocationResult:
+    mcp_server = _server_module()
     started = perf_counter()
     try:
         with anyio.fail_after(timeout_seconds):
@@ -227,6 +237,7 @@ async def _run_mode(
     concurrency: int,
     timeout_seconds: float,
 ) -> dict[str, object]:
+    mcp_server = _server_module()
     semaphore = anyio.Semaphore(concurrency)
     latencies: list[float] = []
     errors: list[str] = []
@@ -300,17 +311,16 @@ def _print_mode_summary(mode_result: dict[str, object]) -> None:
     latency = mode_result["latency_ms"]
     assert isinstance(latency, dict)
     print(
-        (
-            f"[{mode_result['mode']}] req={mode_result['requests']} conc={mode_result['concurrency']} "
-            f"ok={mode_result['successes']} fail={mode_result['failures']} "
-            f"err_rate={mode_result['error_rate']} degraded={mode_result['degraded_count']} "
-            f"rps={mode_result['throughput_rps']} "
-            f"lat(ms): p50={latency['p50']} p95={latency['p95']} p99={latency['p99']}"
-        )
+        f"[{mode_result['mode']}] req={mode_result['requests']} conc={mode_result['concurrency']} "
+        f"ok={mode_result['successes']} fail={mode_result['failures']} "
+        f"err_rate={mode_result['error_rate']} degraded={mode_result['degraded_count']} "
+        f"rps={mode_result['throughput_rps']} "
+        f"lat(ms): p50={latency['p50']} p95={latency['p95']} p99={latency['p99']}"
     )
 
 
 async def _main_async(args: argparse.Namespace) -> dict[str, object]:
+    mcp_server = _server_module()
     sqlite_path = Path(args.sqlite_path)
     _set_persistence(args.persistence_backend, sqlite_path)
 
@@ -356,10 +366,8 @@ async def _main_async(args: argparse.Namespace) -> dict[str, object]:
         for result in mode_results:
             if float(result["error_rate"]) > args.max_error_rate:
                 raise RuntimeError(
-                    (
-                        f"Mode {result['mode']} exceeded max error rate "
-                        f"({result['error_rate']} > {args.max_error_rate})"
-                    )
+                    f"Mode {result['mode']} exceeded max error rate "
+                    f"({result['error_rate']} > {args.max_error_rate})"
                 )
 
     return output
