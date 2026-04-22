@@ -14,7 +14,7 @@
 - Config-backed benchmark policy profiles in `configs/knowledge_release_policy.toml`, with `BenchmarkHarness.from_policy_profile()` and MCP-level `benchmark_profile` selection on both `mars.benchmark` and `mars.release`.
 - Operator-facing `mars.benchmark.profiles` discovery tool that lists the configured default profile plus every available benchmark profile, version, source, and covered metric set.
 - Visual Mission Ops dashboard panel for the same profile catalog, exposed as `/dashboard/fragments/benchmark-profiles` and rendered as an operator-readable profile grid.
-- Mission Ops operator launch forms that dispatch selected benchmark profiles directly into `mars.benchmark` and `mars.release`, exposing runtime responses inline in the dashboard.
+- Mission Ops operator launch forms that dispatch selected benchmark profiles directly into `mars.benchmark` and `mars.release`, prefill the latest successful `plan_id` / `simulation_id` pair when runtime state is available, and expose bundle-path highlights inline in the dashboard response.
 
 ## Governance guarantees
 

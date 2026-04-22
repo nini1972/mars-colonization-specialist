@@ -17,6 +17,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from mars_agent.governance import list_policy_profiles
 from mars_agent.mcp.server import (
+    _PLAN_CORRELATION_BY_ID,
+    _SIMULATION_CORRELATION_BY_ID,
     _TELEMETRY,
     mars_benchmark,
     mars_release,
@@ -469,6 +471,7 @@ def _build_benchmark_profiles_panel() -> dict[str, object]:
 
     raw_profiles = list_policy_profiles()
     profiles = [dict(profile) for profile in raw_profiles]
+    launch_context = _latest_operator_launch_context()
     total_references = 0
     for profile in profiles:
         reference_count = profile.get("reference_count", 0)
@@ -482,7 +485,55 @@ def _build_benchmark_profiles_panel() -> dict[str, object]:
         "profiles": profiles,
         "profile_count": len(profiles),
         "total_references": total_references,
+        "launch_context": launch_context,
     }
+
+
+def _latest_correlated_identifier(
+    index: Mapping[str, str],
+    correlation_id: str,
+) -> str | None:
+    matches = sorted(identifier for identifier, mapped in index.items() if mapped == correlation_id)
+    if not matches:
+        return None
+    return matches[-1]
+
+
+def _latest_operator_launch_context() -> dict[str, str] | None:
+    payload = telemetry_list_events(page=1, page_size=5000, outcome="success")
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return None
+
+    ordered = sorted(
+        (item for item in items if isinstance(item, Mapping)),
+        key=lambda item: (
+            str(item.get("recorded_at", "")),
+            str(item.get("request_id", "")),
+            str(item.get("event", "")),
+        ),
+        reverse=True,
+    )
+    for item in ordered:
+        tool_name = str(item.get("tool", ""))
+        if tool_name not in {"mars.release", "mars.benchmark", "mars.governance", "mars.simulate"}:
+            continue
+        correlation_id = str(item.get("correlation_id", "")).strip()
+        if not correlation_id:
+            continue
+        plan_id = _latest_correlated_identifier(_PLAN_CORRELATION_BY_ID, correlation_id)
+        simulation_id = _latest_correlated_identifier(_SIMULATION_CORRELATION_BY_ID, correlation_id)
+        if plan_id is None or simulation_id is None:
+            continue
+        return {
+            "plan_id": plan_id,
+            "simulation_id": simulation_id,
+            "correlation_id": correlation_id,
+            "request_id": str(item.get("request_id", "")),
+            "source_tool": tool_name,
+            "recorded_at": str(item.get("recorded_at", "")),
+        }
+    return None
 
 
 def _normalize_optional_text(value: str) -> str | None:
@@ -509,6 +560,34 @@ def _decode_tool_error(exc: ToolError) -> tuple[str | None, str]:
     return resolved_code, resolved_message
 
 
+def _extract_release_success_highlights(payload: Mapping[str, object]) -> list[dict[str, str]]:
+    highlights: list[dict[str, str]] = []
+
+    release_raw = payload.get("release")
+    if isinstance(release_raw, Mapping):
+        manifest_raw = release_raw.get("manifest")
+        if isinstance(manifest_raw, Mapping):
+            version = manifest_raw.get("version")
+            if isinstance(version, str) and version:
+                highlights.append({"label": "Manifest Version", "value": version})
+
+    bundle_paths_raw = payload.get("bundle_paths")
+    if isinstance(bundle_paths_raw, Mapping):
+        for key, label in (
+            ("manifest_path", "Manifest Path"),
+            ("manifest", "Manifest Path"),
+            ("bulletin_path", "Bulletin Path"),
+            ("bulletin", "Bulletin Path"),
+            ("audit_path", "Audit Path"),
+            ("audit", "Audit Path"),
+        ):
+            path_value = bundle_paths_raw.get(key)
+            if isinstance(path_value, str) and path_value:
+                highlights.append({"label": label, "value": path_value.replace("\\", "/")})
+
+    return highlights
+
+
 def _render_operator_action_result(
     request: Request,
     *,
@@ -518,6 +597,7 @@ def _render_operator_action_result(
     summary: str,
     details: list[dict[str, str]],
     payload: Mapping[str, object],
+    highlights: list[dict[str, str]] | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -531,6 +611,7 @@ def _render_operator_action_result(
                 "tool_name": tool_name,
                 "ok": ok,
                 "summary": summary,
+                "highlights": highlights or [],
                 "details": details,
                 "json_body": json.dumps(payload, indent=2, sort_keys=True, default=str),
             },
@@ -1046,6 +1127,7 @@ async def benchmark_launch_fragment(
         summary="Runtime benchmark evaluation finished with the selected policy profile.",
         details=details,
         payload=resolved_response,
+        highlights=None,
     )
 
 
@@ -1188,6 +1270,7 @@ async def release_launch_fragment(
         details.append({"label": "Output Directory", "value": resolved_output_dir})
     if isinstance(resolved_request, str) and resolved_request:
         details.append({"label": "Request ID", "value": resolved_request})
+    highlights = _extract_release_success_highlights(resolved_response)
     return _render_operator_action_result(
         request,
         title="Release launch completed",
@@ -1196,6 +1279,7 @@ async def release_launch_fragment(
         summary="Governance release workflow completed and returned a release bundle payload.",
         details=details,
         payload=resolved_response,
+        highlights=highlights,
     )
 
 

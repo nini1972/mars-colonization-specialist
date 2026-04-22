@@ -214,6 +214,7 @@ def _patch_benchmark_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
             },
         ),
     )
+    monkeypatch.setattr(dashboard_app, "_latest_operator_launch_context", lambda: None)
 
 
 def _patch_benchmark_launch(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
@@ -288,7 +289,11 @@ def _patch_release_launch(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
                     "benchmark_profile": benchmark_profile or "nasa-esa-mission-review",
                 }
             },
-            "bundle_paths": {"manifest": str(Path("release") / f"{version}.json")},
+            "bundle_paths": {
+                "manifest_path": str(Path("release") / f"{version}-manifest.json"),
+                "bulletin_path": str(Path("release") / f"{version}-bulletin.md"),
+                "audit_path": str(Path("release") / f"{version}-audit.json"),
+            },
             "request_id": request_id or "req-release-dashboard",
             "ok": True,
         }
@@ -672,6 +677,87 @@ def test_benchmark_profiles_fragment_includes_operator_launch_forms(
     assert "Create Release Bundle" in response.text
 
 
+def test_latest_operator_launch_context_prefers_latest_successful_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_list_events",
+        lambda **_: {
+            "schema_version": "1.0",
+            "items": [
+                {
+                    "recorded_at": "2026-04-22T10:00:00.000+00:00",
+                    "event": "tool.success",
+                    "tool": "mars.governance",
+                    "request_id": "req-older",
+                    "correlation_id": "corr-older",
+                    "outcome": "success",
+                },
+                {
+                    "recorded_at": "2026-04-22T11:00:00.000+00:00",
+                    "event": "tool.success",
+                    "tool": "mars.benchmark",
+                    "request_id": "req-latest",
+                    "correlation_id": "corr-latest",
+                    "outcome": "success",
+                },
+            ],
+            "page": 1,
+            "page_size": 50,
+            "total": 2,
+            "has_next_page": False,
+        },
+    )
+    monkeypatch.setattr(
+        dashboard_app,
+        "_PLAN_CORRELATION_BY_ID",
+        {"plan-0041": "corr-older", "plan-0042": "corr-latest"},
+    )
+    monkeypatch.setattr(
+        dashboard_app,
+        "_SIMULATION_CORRELATION_BY_ID",
+        {"simulation-0041": "corr-older", "simulation-0042": "corr-latest"},
+    )
+
+    context = dashboard_app._latest_operator_launch_context()
+
+    assert context == {
+        "plan_id": "plan-0042",
+        "simulation_id": "simulation-0042",
+        "correlation_id": "corr-latest",
+        "request_id": "req-latest",
+        "source_tool": "mars.benchmark",
+        "recorded_at": "2026-04-22T11:00:00.000+00:00",
+    }
+
+
+def test_benchmark_profiles_fragment_prefills_ids_from_latest_successful_chain(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_benchmark_profiles(monkeypatch)
+    monkeypatch.setattr(
+        dashboard_app,
+        "_latest_operator_launch_context",
+        lambda: {
+            "plan_id": "plan-0042",
+            "simulation_id": "simulation-0042",
+            "correlation_id": "corr-latest",
+            "request_id": "req-latest",
+            "source_tool": "mars.benchmark",
+            "recorded_at": "2026-04-22T11:00:00.000+00:00",
+        },
+    )
+
+    response = client.get("/dashboard/fragments/benchmark-profiles")
+
+    assert response.status_code == 200
+    assert "Prefilled from latest successful chain" in response.text
+    assert 'value="plan-0042"' in response.text
+    assert 'value="simulation-0042"' in response.text
+
+
 def test_benchmark_launch_fragment_dispatches_selected_profile(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -726,8 +812,12 @@ def test_release_launch_fragment_dispatches_release_bundle_request(
 
     assert response.status_code == 200
     assert "Release launch completed" in response.text
+    assert "Release Highlights" in response.text
     assert "2026.HF-03" in response.text
     assert "artifacts/releases" in response.text
+    assert "release/2026.HF-03-manifest.json" in response.text
+    assert "release/2026.HF-03-bulletin.md" in response.text
+    assert "release/2026.HF-03-audit.json" in response.text
     assert "req-operator-release" in response.text
     assert captured == {
         "plan_id": "plan-7",

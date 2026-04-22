@@ -8,6 +8,16 @@
       </div>
     </div>
     <p class="muted">{{ result["summary"] }}</p>
+    {% if result["highlights"] %}
+    <section class="operator-highlights">
+      <h4>Release Highlights</h4>
+      <ul class="keyvals result-keyvals">
+        {% for highlight in result["highlights"] %}
+        <li><span>{{ highlight["label"] }}</span><strong>{{ highlight["value"] }}</strong></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
     <ul class="keyvals result-keyvals">
       {% for detail in result["details"] %}
       <li><span>{{ detail["label"] }}</span><strong>{{ detail["value"] }}</strong></li>

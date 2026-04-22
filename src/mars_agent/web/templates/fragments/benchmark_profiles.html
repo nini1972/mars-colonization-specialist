@@ -6,21 +6,28 @@
 
   <div class="stats">
     <div class="stat">
+    {% set launch = catalog["launch_context"] %}
       <label>Default Profile</label>
       <strong>{{ catalog["default_profile"] }}</strong>
     </div>
     <div class="stat">
       <label>Profiles</label>
+    {% if launch %}
+    <div class="banner prefill-banner" role="status">
+      Prefilled from latest successful chain <strong>{{ launch["correlation_id"] }}</strong>
+      via {{ launch["source_tool"] }} at {{ launch["recorded_at"] }}.
+    </div>
+    {% endif %}
       <strong>{{ catalog["profile_count"] }}</strong>
     </div>
     <div class="stat">
       <label>Total References</label>
       <strong>{{ catalog["total_references"] }}</strong>
     </div>
-  </div>
+          <input id="benchmark-plan-id" type="text" name="plan_id" placeholder="plan-..." value="{{ launch['plan_id'] if launch else '' }}" required>
 
   {% if not catalog["profiles"] %}
-  <p class="muted">No benchmark profiles configured yet.</p>
+          <input id="benchmark-simulation-id" type="text" name="simulation_id" placeholder="simulation-..." value="{{ launch['simulation_id'] if launch else '' }}" required>
   {% else %}
   <div class="profile-catalog">
     {% for profile in catalog["profiles"] %}
@@ -84,10 +91,10 @@
         <h3>Create Release Bundle</h3>
         <form class="operator-form" hx-post="/dashboard/fragments/release-launch" hx-target="#release-launch-result" hx-swap="innerHTML">
           <label for="release-plan-id">Plan ID</label>
-          <input id="release-plan-id" type="text" name="plan_id" placeholder="plan-..." required>
+          <input id="release-plan-id" type="text" name="plan_id" placeholder="plan-..." value="{{ launch['plan_id'] if launch else '' }}" required>
 
           <label for="release-simulation-id">Simulation ID</label>
-          <input id="release-simulation-id" type="text" name="simulation_id" placeholder="simulation-..." required>
+          <input id="release-simulation-id" type="text" name="simulation_id" placeholder="simulation-..." value="{{ launch['simulation_id'] if launch else '' }}" required>
 
           <label for="release-type">Release Type</label>
           <select id="release-type" name="release_type">
