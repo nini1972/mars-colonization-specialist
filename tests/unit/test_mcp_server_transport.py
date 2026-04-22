@@ -535,10 +535,7 @@ def test_transport_release_matches_adapter_invoke_output(
     goal = _goal()
     evidence = _evidence()
     bundle_dir = tmp_path / "release-bundle"
-    benchmark_harness = _permissive_benchmark_harness()
-    monkeypatch.setattr(mcp_server._adapter, "benchmark_harness", benchmark_harness)
-
-    adapter = MarsMCPAdapter(benchmark_harness=benchmark_harness)
+    adapter = MarsMCPAdapter()
     expected_plan = adapter.invoke(
         "mars.plan",
         {
@@ -570,6 +567,7 @@ def test_transport_release_matches_adapter_invoke_output(
             "changed_doc_ids": ["doc-1", "doc-2"],
             "summary": "Quarterly MCP release review.",
             "output_dir": str(bundle_dir),
+            "benchmark_profile": "nasa-esa-mission-review-permissive",
             "min_confidence": 0.75,
         },
     )
@@ -603,6 +601,7 @@ def test_transport_release_matches_adapter_invoke_output(
             version="2026.Q3",
             changed_doc_ids=["doc-1", "doc-2"],
             summary="Quarterly MCP release review.",
+            benchmark_profile="nasa-esa-mission-review-permissive",
             min_confidence=0.75,
             output_dir=str(bundle_dir),
             request_id="req-direct-release",
@@ -617,11 +616,52 @@ def test_transport_release_matches_adapter_invoke_output(
     assert isinstance(release_payload, dict)
     manifest_payload = release_payload.get("manifest")
     assert isinstance(manifest_payload, dict)
-    assert manifest_payload["benchmark_policy_version"] == "2026.03"
+    assert manifest_payload["benchmark_profile"] == "nasa-esa-mission-review-permissive"
+    assert manifest_payload["benchmark_policy_version"] == "2026.03-dev"
     assert manifest_payload["governance_policy_version"] == "knowledge-release-policy.v1"
     assert (bundle_dir / "2026.Q3-quarterly-manifest.json").exists()
     assert (bundle_dir / "2026.Q3-quarterly-bulletin.md").exists()
     assert (bundle_dir / "2026.Q3-quarterly-audit.json").exists()
+
+
+def test_transport_benchmark_accepts_named_policy_profile() -> None:
+    goal = _goal()
+    evidence = _evidence()
+
+    actual_plan = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(goal),
+            evidence=_evidence_payload(evidence),
+            request_id="req-direct-profile-plan",
+        )
+    )
+    actual_plan_id = _unwrap_success(actual_plan)["plan_id"]
+    assert isinstance(actual_plan_id, str)
+
+    actual_simulation = _call_direct_sync(
+        mars_simulate(
+            plan_id=actual_plan_id,
+            seed=42,
+            max_repair_attempts=2,
+            request_id="req-direct-profile-sim",
+        )
+    )
+    actual_simulation_id = _unwrap_success(actual_simulation)["simulation_id"]
+    assert isinstance(actual_simulation_id, str)
+
+    actual_benchmark = _call_direct_sync(
+        mars_benchmark(
+            plan_id=actual_plan_id,
+            simulation_id=actual_simulation_id,
+            benchmark_profile="nasa-esa-mission-review-permissive",
+            request_id="req-direct-profile-bench",
+        )
+    )
+
+    payload = _unwrap_success(actual_benchmark)["benchmark"]
+    assert isinstance(payload, dict)
+    assert payload["profile"] == "nasa-esa-mission-review-permissive"
+    assert payload["policy_version"] == "2026.03-dev"
 
 
 def test_transport_stdio_call_matches_adapter_and_emits_request_id() -> None:

@@ -66,3 +66,11 @@ def test_benchmark_harness_can_fail_on_tight_tolerance() -> None:
     assert not report.passed
     assert report.policy_source == "NASA/ESA mission review benchmark bundle"
     assert report.deltas[0].within_tolerance is False
+
+
+def test_benchmark_harness_can_load_named_policy_profile() -> None:
+    harness = BenchmarkHarness.from_policy_profile("nasa-esa-mission-review-permissive")
+
+    assert harness.profile == "nasa-esa-mission-review-permissive"
+    assert harness.policy_version == "2026.03-dev"
+    assert len(harness.references) == 3

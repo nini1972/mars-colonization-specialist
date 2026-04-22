@@ -216,6 +216,7 @@ class MarsMCPAdapter:
     simulation_pipeline: SimulationPipeline = field(default_factory=SimulationPipeline)
     governance_gate: GovernanceGate = field(default_factory=GovernanceGate)
     benchmark_harness: BenchmarkHarness = field(default_factory=BenchmarkHarness)
+    benchmark_policy_path: Path = Path("configs/knowledge_release_policy.toml")
     _plans: dict[str, PlanResult] = field(default_factory=dict, init=False, repr=False)
     _simulations: dict[str, SimulationReport] = field(default_factory=dict, init=False, repr=False)
 
@@ -301,7 +302,12 @@ class MarsMCPAdapter:
         if tool_name == "mars.benchmark":
             plan_id = _require_string(arguments, "plan_id")
             simulation_id = _require_string(arguments, "simulation_id")
-            return self._benchmark(plan_id=plan_id, simulation_id=simulation_id)
+            benchmark_profile = _optional_string(arguments, "benchmark_profile")
+            return self._benchmark(
+                plan_id=plan_id,
+                simulation_id=simulation_id,
+                benchmark_profile=benchmark_profile,
+            )
 
         if tool_name == "mars.release":
             plan_id = _require_string(arguments, "plan_id")
@@ -311,6 +317,7 @@ class MarsMCPAdapter:
             changed_doc_ids = _require_string_sequence(arguments, "changed_doc_ids")
             summary = _require_string(arguments, "summary")
             output_dir = _optional_string(arguments, "output_dir")
+            benchmark_profile = _optional_string(arguments, "benchmark_profile")
             min_confidence = _optional_float(
                 arguments,
                 "min_confidence",
@@ -324,6 +331,7 @@ class MarsMCPAdapter:
                 changed_doc_ids=changed_doc_ids,
                 summary=summary,
                 output_dir=output_dir,
+                benchmark_profile=benchmark_profile,
                 min_confidence=min_confidence,
             )
 
@@ -383,7 +391,12 @@ class MarsMCPAdapter:
             "governance": to_mcp_value(report),
         }
 
-    def _benchmark(self, plan_id: str, simulation_id: str) -> dict[str, MCPValue]:
+    def _benchmark(
+        self,
+        plan_id: str,
+        simulation_id: str,
+        benchmark_profile: str | None,
+    ) -> dict[str, MCPValue]:
         plan = self._plans.get(plan_id)
         if plan is None:
             raise KeyError(f"Unknown plan_id: {plan_id}")
@@ -392,7 +405,8 @@ class MarsMCPAdapter:
         if simulation is None:
             raise KeyError(f"Unknown simulation_id: {simulation_id}")
 
-        report = self.benchmark_harness.run(plan=plan, simulation=simulation)
+        harness = self._resolve_benchmark_harness(benchmark_profile)
+        report = harness.run(plan=plan, simulation=simulation)
         return {
             "benchmark": to_mcp_value(report),
         }
@@ -407,6 +421,7 @@ class MarsMCPAdapter:
         changed_doc_ids: tuple[str, ...],
         summary: str,
         output_dir: str | None,
+        benchmark_profile: str | None,
         min_confidence: float,
     ) -> dict[str, MCPValue]:
         plan = self._plans.get(plan_id)
@@ -422,7 +437,7 @@ class MarsMCPAdapter:
 
         workflow = GovernanceWorkflow(
             governance_gate=GovernanceGate(min_confidence=min_confidence),
-            benchmark_harness=self.benchmark_harness,
+            benchmark_harness=self._resolve_benchmark_harness(benchmark_profile),
         )
         bundle_dir = Path(output_dir) if output_dir is not None else None
         audit_path = None
@@ -461,3 +476,14 @@ class MarsMCPAdapter:
                 workflow.export_release_bundle(result, bundle_dir)
             )
         return payload
+
+    def _resolve_benchmark_harness(
+        self,
+        benchmark_profile: str | None,
+    ) -> BenchmarkHarness:
+        if benchmark_profile is None:
+            return self.benchmark_harness
+        return BenchmarkHarness.from_policy_profile(
+            benchmark_profile,
+            policy_path=self.benchmark_policy_path,
+        )

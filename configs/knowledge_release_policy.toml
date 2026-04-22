@@ -6,3 +6,50 @@ hotfix_lane_enabled = true
 require_provenance = true
 require_confidence_score = true
 require_validation_gate = true
+
+[benchmark]
+default_profile = "nasa-esa-mission-review"
+
+[benchmark.profiles.nasa-esa-mission-review]
+policy_version = "2026.03"
+policy_source = "NASA/ESA mission review benchmark bundle"
+
+[[benchmark.profiles.nasa-esa-mission-review.references]]
+metric = "load_margin_kw"
+target = 15.0
+tolerance = 15.0
+source = "NASA Mars Habitat Power Margin Guidance"
+
+[[benchmark.profiles.nasa-esa-mission-review.references]]
+metric = "resource_surplus_ratio"
+target = 1.2
+tolerance = 0.35
+source = "ESA Exploration Readiness Baseline"
+
+[[benchmark.profiles.nasa-esa-mission-review.references]]
+metric = "storage_cover_hours"
+target = 20.0
+tolerance = 6.0
+source = "NASA Dust-Storm Operations Envelope"
+
+[benchmark.profiles.nasa-esa-mission-review-permissive]
+policy_version = "2026.03-dev"
+policy_source = "Synthetic permissive mission review benchmark bundle"
+
+[[benchmark.profiles.nasa-esa-mission-review-permissive.references]]
+metric = "load_margin_kw"
+target = 15.0
+tolerance = 1000.0
+source = "Synthetic permissive margin reference"
+
+[[benchmark.profiles.nasa-esa-mission-review-permissive.references]]
+metric = "resource_surplus_ratio"
+target = 1.2
+tolerance = 1000.0
+source = "Synthetic permissive surplus reference"
+
+[[benchmark.profiles.nasa-esa-mission-review-permissive.references]]
+metric = "storage_cover_hours"
+target = 20.0
+tolerance = 1000.0
+source = "Synthetic permissive storage reference"

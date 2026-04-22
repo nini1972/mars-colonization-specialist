@@ -852,6 +852,7 @@ def _validate_transport_arguments(tool_name: str, arguments: Mapping[str, object
     if tool_name == "mars.benchmark":
         _require_string(arguments, "plan_id")
         _require_string(arguments, "simulation_id")
+        _optional_string(arguments, "benchmark_profile")
         return
 
     if tool_name == "mars.release":
@@ -863,6 +864,7 @@ def _validate_transport_arguments(tool_name: str, arguments: Mapping[str, object
         _require_string(arguments, "version")
         _require_string_sequence(arguments, "changed_doc_ids")
         _require_string(arguments, "summary")
+        _optional_string(arguments, "benchmark_profile")
         min_confidence = _optional_float(arguments, "min_confidence", 0.85)
         if not 0.0 <= min_confidence <= 1.0:
             raise ValueError("Argument 'min_confidence' must be between 0.0 and 1.0")
@@ -1147,25 +1149,13 @@ async def _invoke_runtime_tool(
         return {"governance": cast(object, to_mcp_value(governance))}
 
     if tool_name == "mars.benchmark":
-        plan_id = _require_string(arguments, "plan_id")
-        simulation_id = _require_string(arguments, "simulation_id")
-        plan_result = _adapter._plans.get(plan_id)
-        if plan_result is None:
-            raise KeyError(f"Unknown plan_id: {plan_id}")
-        simulation_result = _adapter._simulations.get(simulation_id)
-        if simulation_result is None:
-            raise KeyError(f"Unknown simulation_id: {simulation_id}")
-        plan = plan_result
-        simulation = simulation_result
+        def _compute_benchmark() -> dict[str, object]:
+            return _as_object_dict(_adapter.invoke(tool_name, arguments))
 
-        def _compute_benchmark() -> object:
-            return _adapter.benchmark_harness.run(plan=plan, simulation=simulation)
-
-        benchmark: object = await _run_bounded_sync(
+        return await _run_bounded_sync(
             _compute_benchmark,
             timeout_seconds=_configured_tool_timeout_seconds(),
         )
-        return {"benchmark": cast(object, to_mcp_value(benchmark))}
 
     if tool_name == "mars.release":
         def _compute_release() -> dict[str, object]:
@@ -1512,6 +1502,7 @@ async def mars_governance(
 async def mars_benchmark(
     plan_id: str,
     simulation_id: str,
+    benchmark_profile: str | None = None,
     request_id: str | None = None,
     auth_token: str | None = None,
 ) -> dict[str, object]:
@@ -1522,6 +1513,7 @@ async def mars_benchmark(
         arguments={
             "plan_id": plan_id,
             "simulation_id": simulation_id,
+            "benchmark_profile": benchmark_profile,
         },
         request_id=request_id,
         auth_token=auth_token,
@@ -1535,6 +1527,7 @@ async def mars_release(
     version: str,
     changed_doc_ids: list[str],
     summary: str,
+    benchmark_profile: str | None = None,
     min_confidence: float = 0.85,
     output_dir: str | None = None,
     request_id: str | None = None,
@@ -1551,6 +1544,7 @@ async def mars_release(
             "version": version,
             "changed_doc_ids": changed_doc_ids,
             "summary": summary,
+            "benchmark_profile": benchmark_profile,
             "min_confidence": min_confidence,
             "output_dir": output_dir,
         },

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from mars_agent.config import load_release_policy_config
 from mars_agent.governance.models import (
     BenchmarkDelta,
     BenchmarkReference,
@@ -11,6 +13,8 @@ from mars_agent.governance.models import (
 )
 from mars_agent.orchestration.models import PlanResult
 from mars_agent.simulation.pipeline import SimulationReport
+
+_DEFAULT_RELEASE_POLICY_PATH = Path("configs/knowledge_release_policy.toml")
 
 
 def default_references() -> tuple[BenchmarkReference, ...]:
@@ -46,6 +50,37 @@ class BenchmarkHarness:
     policy_version: str = "2026.03"
     policy_source: str = "NASA/ESA mission review benchmark bundle"
     references: tuple[BenchmarkReference, ...] = field(default_factory=default_references)
+
+    @classmethod
+    def from_policy_profile(
+        cls,
+        profile: str | None = None,
+        *,
+        policy_path: Path = _DEFAULT_RELEASE_POLICY_PATH,
+    ) -> BenchmarkHarness:
+        """Build a harness from a named benchmark policy profile in config."""
+
+        config = load_release_policy_config(policy_path)
+        selected_name = profile or config.default_benchmark_profile
+        for item in config.benchmark_profiles:
+            if item.name != selected_name:
+                continue
+            return cls(
+                profile=item.name,
+                policy_version=item.policy_version,
+                policy_source=item.policy_source,
+                references=tuple(
+                    BenchmarkReference(
+                        metric=reference.metric,
+                        target=reference.target,
+                        tolerance=reference.tolerance,
+                        source=reference.source,
+                    )
+                    for reference in item.references
+                ),
+            )
+
+        raise ValueError(f"Unknown benchmark profile: {selected_name}")
 
     def _observed_metrics(self, plan: PlanResult, simulation: SimulationReport) -> dict[str, float]:
         observed: dict[str, float] = {}

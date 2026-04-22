@@ -256,12 +256,15 @@ def test_mcp_release_parity_matches_composed_workflow(tmp_path: Path) -> None:
             "changed_doc_ids": ["doc-7"],
             "summary": "Critical operator workflow fix.",
             "output_dir": str(output_dir),
+            "benchmark_profile": "nasa-esa-mission-review-permissive",
             "min_confidence": 0.75,
         },
     )
 
     workflow = GovernanceWorkflow(
-        benchmark_harness=benchmark_harness,
+        benchmark_harness=BenchmarkHarness.from_policy_profile(
+            "nasa-esa-mission-review-permissive"
+        ),
         governance_gate=GovernanceGate(min_confidence=0.75),
     )
     expected_result = workflow.finalize_hotfix(
@@ -283,8 +286,51 @@ def test_mcp_release_parity_matches_composed_workflow(tmp_path: Path) -> None:
     assert isinstance(release_payload, dict)
     manifest_payload = release_payload.get("manifest")
     assert isinstance(manifest_payload, dict)
-    assert manifest_payload["benchmark_profile"] == "nasa-esa-mission-review"
+    assert manifest_payload["benchmark_profile"] == "nasa-esa-mission-review-permissive"
+    benchmark_payload = release_payload.get("review")
+    assert isinstance(benchmark_payload, dict)
     assert manifest_payload["governance_policy_version"] == "knowledge-release-policy.v1"
     assert (output_dir / "2026.HF-02-hotfix-manifest.json").exists()
     assert (output_dir / "2026.HF-02-hotfix-bulletin.md").exists()
     assert (output_dir / "2026.HF-02-hotfix-audit.json").exists()
+
+
+def test_mcp_benchmark_can_select_named_policy_profile() -> None:
+    goal = _goal()
+    evidence = _evidence()
+    adapter = MarsMCPAdapter()
+
+    plan_result = adapter.invoke(
+        "mars.plan",
+        {
+            "goal": _goal_payload(goal),
+            "evidence": _evidence_payload(evidence),
+        },
+    )
+    plan_id = plan_result["plan_id"]
+    assert isinstance(plan_id, str)
+
+    simulation_result = adapter.invoke(
+        "mars.simulate",
+        {
+            "plan_id": plan_id,
+            "seed": 42,
+            "max_repair_attempts": 2,
+        },
+    )
+    simulation_id = simulation_result["simulation_id"]
+    assert isinstance(simulation_id, str)
+
+    benchmark_result = adapter.invoke(
+        "mars.benchmark",
+        {
+            "plan_id": plan_id,
+            "simulation_id": simulation_id,
+            "benchmark_profile": "nasa-esa-mission-review-permissive",
+        },
+    )
+
+    payload = benchmark_result["benchmark"]
+    assert isinstance(payload, dict)
+    assert payload["profile"] == "nasa-esa-mission-review-permissive"
+    assert payload["policy_version"] == "2026.03-dev"
