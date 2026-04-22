@@ -119,10 +119,11 @@ Prerequisites: Docker Desktop must be running before either command.
 - Phase 11 Step 1 ✅ — Deterministic negotiation protocol groundwork: internal `NegotiationSession` / `NegotiationTranscript` / `NegotiationMessage` primitives added in `src/mars_agent/orchestration/negotiation_protocol.py`; `CentralPlanner` now wraps each replan attempt in a canonical message transcript (`session_started`, `conflict_detected`, `proposal_requested`, `proposal_submitted|fallback_applied|memory_replayed`, `proposal_accepted`, `session_closed`) while keeping `mars.plan` payloads and MCP contracts unchanged. This is the first step toward peer-to-peer, message-driven negotiation; specialists are not yet exchanging messages directly.
 - Phase 11 Step 2 ✅ — Specialist-authored negotiation proposals: each specialist now implements deterministic `propose_tradeoffs()` logic and can emit `TradeoffProposal` objects for active conflict IDs. `CentralPlanner` collects these proposals from impacted specialists, records them as `proposal_submitted` transcript events, passes them into `MultiAgentNegotiator` prompt construction, and uses them to seed deterministic fallback knob selection. This moves proposal authorship away from the planner while preserving existing `mars.plan` and MCP response shapes.
 - Phase 11 Step 3 ✅ — Negotiation observability surfaces: `CentralPlanner` now publishes completed negotiation sessions through an internal observer hook; MCP telemetry stores recent negotiation sessions separately from tool events; the dashboard adds a `Negotiation Sessions` fragment that renders recent transcript-driven sessions, specialist proposals, decision source (`llm | fallback | memory`), and ordered transcript messages. This remains dashboard/internal-telemetry only and does not change public MCP tool payloads.
+- Phase 11 Step 4 ✅ — Bounded specialist-to-specialist message handling: specialists now consume peer-authored proposals via deterministic `review_peer_proposals()` logic, emit peer review notes in a single bounded round, and record `proposal_reviewed` transcript events before the session closes. `CentralPlanner` threads those reviews into both `MultiAgentNegotiator` prompt construction and deterministic fallback selection, so peer review now affects negotiation context without changing `mars.plan` or MCP tool response schemas.
 
 ## Next
 
-- Continue the Phase 11 rollout by introducing bounded specialist-to-specialist message handling on top of the deterministic session scheduler while keeping transcript observability and MCP payload stability intact.
+- Continue the Phase 11 rollout by evolving the bounded peer-review round into richer counter-proposal handling while keeping transcript determinism, dashboard observability, and MCP payload stability intact.
 - Continue telemetry soak for `MARS_MCP_PLANNER_ASYNC=true` under production-like load before making it a default.
 - See `docs/phase9b-operator-runbook-v0.md` for dashboard operation and `docs/phase8-transport-auth-observability-scope.md` for MCP transport details.
 
@@ -295,3 +296,7 @@ The MCP server now emits structured observability signals while preserving the e
 | D | Persistent negotiation memory — resolved conflict patterns persisted to SQLite for cross-mission reuse | ✅ Done (125 tests passing) |
 | E | Agent health panel in dashboard — per-specialist call count, avg latency, and last outcome fragment | ✅ Done (133 tests passing) |
 | F | Specialist health and graceful degradation — isolate per-specialist failures, emit degraded plans, and surface fault telemetry in MCP and dashboard | ✅ Done (170 tests passing) |
+
+
+Phase 4 should introduce bounded specialist-to-specialist message consumption on top of the deterministic session scheduler.
+After that, we can decide whether to surface negotiation session drill-down through an internal JSON endpoint or keep it dashboard-only.

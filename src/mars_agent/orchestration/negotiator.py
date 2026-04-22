@@ -16,8 +16,11 @@ from mars_agent.orchestration.models import (
     KnowledgeContext,
     MissionGoal,
 )
-from mars_agent.specialists.contracts import SpecialistCapability
-from mars_agent.specialists.contracts import TradeoffProposal
+from mars_agent.specialists.contracts import (
+    SpecialistCapability,
+    TradeoffProposal,
+    TradeoffReview,
+)
 
 type ChatCompletionMessageParamT = dict[str, str]
 
@@ -397,6 +400,18 @@ class MultiAgentNegotiator:
             )
         return "\n".join(lines)
 
+    def _review_section(self, reviews: tuple[TradeoffReview, ...]) -> str:
+        if not reviews:
+            return ""
+
+        lines = ["\n\nPeer review of specialist proposals:"]
+        for review in reviews:
+            lines.append(
+                f"  [{review.reviewer_subsystem.name}] {review.disposition.value} "
+                f"{review.proposal_subsystem.name}.{review.knob_name} -> {review.rationale}"
+            )
+        return "\n".join(lines)
+
     def _build_messages(
         self,
         goal: MissionGoal,
@@ -406,6 +421,7 @@ class MultiAgentNegotiator:
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
         proposals: tuple[TradeoffProposal, ...] = (),
+        reviews: tuple[TradeoffReview, ...] = (),
     ) -> list[ChatCompletionMessageParamT]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
@@ -436,6 +452,7 @@ class MultiAgentNegotiator:
         system_prompt = self._append_knowledge_context(system_prompt, knowledge_context)
         history_section = self._history_section(history)
         proposal_section = self._proposal_section(proposals)
+        review_section = self._review_section(reviews)
 
         user_prompt = (
             f"Mission Goal: {goal.crew_size} crew, Phase: {goal.current_phase.name}.\n"
@@ -444,6 +461,7 @@ class MultiAgentNegotiator:
             + "\n".join(conflict_descriptions)
             + history_section
             + proposal_section
+            + review_section
             + "\n\nPlease propose a new ISRU feedstock reduction fraction to "
             "resolve the power deficit safely."
         )
@@ -462,6 +480,7 @@ class MultiAgentNegotiator:
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
         proposals: tuple[TradeoffProposal, ...] = (),
+        reviews: tuple[TradeoffReview, ...] = (),
     ) -> tuple[bool, float, int, float, str]:
         """
         Executes a multi-agent negotiation loop to resolve specific conflicts.
@@ -482,6 +501,7 @@ class MultiAgentNegotiator:
                         capabilities=capabilities,
                         knowledge_context=knowledge_context,
                         proposals=proposals,
+                        reviews=reviews,
                     )
                 )
                 if async_result[4] not in {
@@ -504,6 +524,7 @@ class MultiAgentNegotiator:
                 capabilities,
                 knowledge_context,
                 proposals,
+                reviews,
             )
 
             if self._responses_enabled() and hasattr(self.client, "responses"):
@@ -530,6 +551,7 @@ class MultiAgentNegotiator:
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
         proposals: tuple[TradeoffProposal, ...] = (),
+        reviews: tuple[TradeoffReview, ...] = (),
     ) -> tuple[bool, float, int, float, str]:
         """Async variant of negotiate() used when async mode is enabled."""
         if not self.is_enabled or self.async_client is None:
@@ -550,6 +572,7 @@ class MultiAgentNegotiator:
                 capabilities,
                 knowledge_context,
                 proposals,
+                reviews,
             )
 
             if self._responses_enabled() and hasattr(self.async_client, "responses"):

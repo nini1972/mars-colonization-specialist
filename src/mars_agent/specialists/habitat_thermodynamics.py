@@ -21,8 +21,10 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
-    TradeoffProposal,
     TradeoffKnob,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
     UncertaintyBounds,
 )
 
@@ -263,6 +265,32 @@ class HabitatThermodynamicsSpecialist:
                 conflict_ids=relevant,
             ),
         )
+
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        if not any(
+            cid.startswith("coupling.power") or cid == "coupling.power_balance.thermal_shortfall"
+            for cid in conflict_ids
+        ):
+            return ()
+        reviews = [
+            TradeoffReview(
+                reviewer_subsystem=Subsystem.HABITAT_THERMODYNAMICS,
+                proposal_subsystem=proposal.subsystem,
+                knob_name=proposal.knob_name,
+                disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
+                rationale=(
+                    "Thermal control acknowledges the peer proposal as compatible with "
+                    "maintaining habitat regulation while relieving power stress."
+                ),
+            )
+            for proposal in proposals
+            if proposal.subsystem is not Subsystem.HABITAT_THERMODYNAMICS
+        ]
+        return tuple(reviews)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.HABITAT_THERMODYNAMICS:

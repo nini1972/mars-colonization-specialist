@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, cast
 
 from mars_agent.specialists.contracts import (
     ModuleRequest,
@@ -11,6 +11,7 @@ from mars_agent.specialists.contracts import (
     SpecialistCapability,
     Subsystem,
     TradeoffProposal,
+    TradeoffReview,
 )
 
 
@@ -18,6 +19,11 @@ class _HasCapabilitiesAndAnalyze(Protocol):
     def capabilities(self) -> SpecialistCapability: ...
     def analyze(self, request: ModuleRequest) -> ModuleResponse: ...
     def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]: ...
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]: ...
 
 
 @dataclass
@@ -76,8 +82,10 @@ class SpecialistRegistry:
         from mars_agent.specialists.power import PowerSpecialist
 
         registry = cls()
-        registry.register(ECLSSSpecialist())
-        registry.register(ISRUSpecialist())
-        registry.register(PowerSpecialist())
-        registry.register(HabitatThermodynamicsSpecialist())
+        registry.register(cast(_HasCapabilitiesAndAnalyze, ECLSSSpecialist()))
+        registry.register(cast(_HasCapabilitiesAndAnalyze, ISRUSpecialist()))
+        registry.register(cast(_HasCapabilitiesAndAnalyze, PowerSpecialist()))
+        registry.register(
+            cast(_HasCapabilitiesAndAnalyze, HabitatThermodynamicsSpecialist())
+        )
         return registry

@@ -21,8 +21,10 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
-    TradeoffProposal,
     TradeoffKnob,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
     UncertaintyBounds,
 )
 
@@ -90,6 +92,29 @@ class ECLSSSpecialist:
                 conflict_ids=relevant,
             ),
         )
+
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        if not any(cid.startswith("coupling.power") for cid in conflict_ids):
+            return ()
+        reviews = [
+            TradeoffReview(
+                reviewer_subsystem=Subsystem.ECLSS,
+                proposal_subsystem=proposal.subsystem,
+                knob_name=proposal.knob_name,
+                disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
+                rationale=(
+                    "ECLSS acknowledges peer action that reduces shared power pressure "
+                    "while preserving life-support stability."
+                ),
+            )
+            for proposal in proposals
+            if proposal.subsystem is not Subsystem.ECLSS
+        ]
+        return tuple(reviews)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.ECLSS:

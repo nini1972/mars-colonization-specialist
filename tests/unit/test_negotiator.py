@@ -17,7 +17,12 @@ from mars_agent.orchestration.models import (
     RetrievedEvidence,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
-from mars_agent.specialists.contracts import Subsystem, TradeoffProposal
+from mars_agent.specialists.contracts import (
+    Subsystem,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
+)
 
 
 def _goal() -> MissionGoal:
@@ -210,6 +215,31 @@ def test_negotiate_includes_specialist_proposals_in_user_message() -> None:
     assert "Specialist-authored tradeoff proposals" in user_message
     assert "ISRU" in user_message
     assert "dust_degradation_adjustment" in user_message
+
+
+def test_negotiate_includes_peer_reviews_in_user_message() -> None:
+    payload = {"accepted": True, "isru_reduction_fraction": 0.4, "rationale": "OK."}
+    negotiator, mock_client = _negotiator_with_mock_client(payload)
+
+    negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+        reviews=(
+            TradeoffReview(
+                reviewer_subsystem=Subsystem.POWER,
+                proposal_subsystem=Subsystem.ISRU,
+                knob_name="isru_reduction_fraction",
+                disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
+                rationale="Power agrees the cut restores headroom.",
+            ),
+        ),
+    )
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    user_message = call_kwargs.kwargs["messages"][1]["content"]
+    assert "Peer review of specialist proposals" in user_message
+    assert "Power agrees the cut restores headroom." in user_message
 
 
 def test_negotiate_crew_reduction_propagated() -> None:

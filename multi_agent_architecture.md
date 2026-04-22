@@ -164,4 +164,19 @@ Latest Alignment Update (Phase 11 Step 3)
 	- the final plan contract remains unchanged
 - Phase 11 Step 4 should introduce deterministic specialist-to-specialist message consumption while reusing the transcript, observer, and dashboard surfaces added in Steps 1-3.
 
+Latest Alignment Update (Phase 11 Step 4)
+
+- Bounded specialist-to-specialist message handling is now active inside the deterministic session scheduler.
+- Specialists still do not run arbitrary conversations, but they now consume peer-authored proposals through `review_peer_proposals()` and emit deterministic peer review outcomes in one bounded review round.
+- `CentralPlanner` now records `proposal_reviewed` transcript messages after the initial `proposal_submitted` wave and before the final fallback/LLM decision.
+- Peer review is now threaded into both decision paths:
+	- `MultiAgentNegotiator._build_messages()` receives peer review context for LLM-assisted negotiation.
+	- `_conflict_aware_fallback()` now only credits proposal-derived fallback deltas that were acknowledged by peer review when reviews are present.
+- This means specialist-to-specialist message consumption is no longer just observable; it now influences the deterministic resolution path.
+- The system is still not fully decentralized yet:
+	- the planner still schedules and bounds the round
+	- specialists emit reviews, not open-ended conversations
+	- acceptance and plan mutation still collapse into the existing planner contract
+- A next Phase 5 would introduce deterministic counter-proposal exchange or multi-round bounded negotiation if that extra complexity is justified by mission outcomes.
+
 Claude Sonnet 4.6 • 1x

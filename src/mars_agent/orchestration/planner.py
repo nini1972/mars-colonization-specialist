@@ -51,6 +51,7 @@ from mars_agent.specialists import (
     UncertaintyBounds,
 )
 from mars_agent.specialists.contracts import TradeoffProposal
+from mars_agent.specialists.contracts import TradeoffReview, TradeoffReviewDisposition
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +518,7 @@ class CentralPlanner:
         current_reduction: float,
         knowledge_context: KnowledgeContext | None = None,
         proposals: tuple[TradeoffProposal, ...] = (),
+        reviews: tuple[TradeoffReview, ...] = (),
     ) -> tuple[float, int, float, str]:
         """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
 
@@ -535,10 +537,21 @@ class CentralPlanner:
                 if knob.name == "isru_reduction_fraction":
                     cap_isru_delta = max(cap_isru_delta, knob.preferred_delta)
 
+        acknowledged = {
+            (review.proposal_subsystem, review.knob_name)
+            for review in reviews
+            if review.disposition is TradeoffReviewDisposition.ACKNOWLEDGE
+        }
+        active_proposals = tuple(
+            proposal
+            for proposal in proposals
+            if not reviews or (proposal.subsystem, proposal.knob_name) in acknowledged
+        )
+
         proposal_isru = max(
             (
                 proposal.suggested_delta
-                for proposal in proposals
+                for proposal in active_proposals
                 if proposal.knob_name == "isru_reduction_fraction"
             ),
             default=0.0,
@@ -546,7 +559,7 @@ class CentralPlanner:
         proposal_crew = max(
             (
                 int(round(proposal.suggested_delta))
-                for proposal in proposals
+                for proposal in active_proposals
                 if proposal.knob_name == "crew_reduction"
             ),
             default=0,
@@ -554,7 +567,7 @@ class CentralPlanner:
         proposal_dust = max(
             (
                 proposal.suggested_delta
-                for proposal in proposals
+                for proposal in active_proposals
                 if proposal.knob_name == "dust_degradation_adjustment"
             ),
             default=0.0,
@@ -596,7 +609,8 @@ class CentralPlanner:
         rationale = (
             f"Conflict-aware fallback for [{conflict_list}]: "
             f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f} "
-            f"(knowledge_weight={trust_weight:.2f}, specialist_proposals={len(proposals)})."
+            f"(knowledge_weight={trust_weight:.2f}, specialist_proposals={len(active_proposals)}, "
+            f"peer_reviews={len(reviews)})."
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
 
@@ -630,6 +644,43 @@ class CentralPlanner:
             )
         )
 
+    def _collect_peer_reviews(
+        self,
+        conflicts: tuple[CrossDomainConflict, ...],
+        proposals: tuple[TradeoffProposal, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        if not proposals:
+            return ()
+
+        conflict_ids = tuple(sorted({conflict.conflict_id for conflict in conflicts}))
+        impacted = tuple(
+            sorted(
+                {
+                    subsystem
+                    for conflict in conflicts
+                    for subsystem in conflict.impacted_subsystems
+                },
+                key=lambda subsystem: subsystem.value,
+            )
+        )
+        reviews: list[TradeoffReview] = []
+        for subsystem in impacted:
+            reviews.extend(
+                self.registry.get(subsystem).review_peer_proposals(proposals, conflict_ids)
+            )
+        return tuple(
+            sorted(
+                reviews,
+                key=lambda review: (
+                    review.reviewer_subsystem.value,
+                    review.proposal_subsystem.value,
+                    review.knob_name,
+                    review.disposition.value,
+                    review.rationale,
+                ),
+            )
+        )
+
     def _publish_negotiation_session(
         self,
         *,
@@ -638,6 +689,7 @@ class CentralPlanner:
         current_reduction: float,
         decision: NegotiationDecision,
         proposals: tuple[TradeoffProposal, ...],
+        reviews: tuple[TradeoffReview, ...],
         session: NegotiationSession,
     ) -> None:
         observer = self.negotiation_observer
@@ -669,6 +721,17 @@ class CentralPlanner:
                     "conflict_ids": list(proposal.conflict_ids),
                 }
                 for proposal in proposals
+            ],
+            "reviews": [
+                {
+                    "reviewer_subsystem": review.reviewer_subsystem.value,
+                    "proposal_subsystem": review.proposal_subsystem.value,
+                    "knob_name": review.knob_name,
+                    "disposition": review.disposition.value,
+                    "rationale": review.rationale,
+                    "suggested_delta": review.suggested_delta,
+                }
+                for review in reviews
             ],
             "messages": [
                 {
@@ -835,9 +898,24 @@ class CentralPlanner:
                     "conflict_ids": list(proposal.conflict_ids),
                 },
             )
+        reviews = self._collect_peer_reviews(conflicts, proposals)
+        for review in reviews:
+            session.transcript.record(
+                sender=review.reviewer_subsystem.value,
+                recipients=(review.proposal_subsystem.value, "planner"),
+                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
+                payload={
+                    "proposal_subsystem": review.proposal_subsystem.value,
+                    "knob_name": review.knob_name,
+                    "disposition": review.disposition.value,
+                    "rationale": review.rationale,
+                    "suggested_delta": review.suggested_delta,
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
+            memory_tag = "fallback" if cached.is_fallback else "llm"
             decision = NegotiationDecision(
                 accepted=True,
                 isru_reduction_fraction=min(
@@ -846,7 +924,7 @@ class CentralPlanner:
                 ),
                 crew_reduction=cached.crew_reduction,
                 dust_degradation_adjustment=cached.dust_degradation_adjustment,
-                rationale=f"[memory hit][{'fallback' if cached.is_fallback else 'llm'}] {cached.rationale}",
+                rationale=f"[memory hit][{memory_tag}] {cached.rationale}",
                 is_fallback=cached.is_fallback,
                 source="memory",
             )
@@ -871,6 +949,7 @@ class CentralPlanner:
                 current_reduction=current_reduction,
                 decision=decision,
                 proposals=proposals,
+                reviews=reviews,
                 session=session,
             )
             return decision, session
@@ -883,6 +962,7 @@ class CentralPlanner:
             capabilities=self.registry.all_capabilities(),
             knowledge_context=knowledge_context,
             proposals=proposals,
+            reviews=reviews,
         )
         is_fallback = False
         source = "llm"
@@ -892,6 +972,7 @@ class CentralPlanner:
                 current_reduction,
                 knowledge_context,
                 proposals,
+                reviews,
             )
             is_fallback = True
             source = "fallback"
@@ -925,6 +1006,7 @@ class CentralPlanner:
             current_reduction=current_reduction,
             decision=decision,
             proposals=proposals,
+            reviews=reviews,
             session=session,
         )
         return decision, session
@@ -957,9 +1039,24 @@ class CentralPlanner:
                     "conflict_ids": list(proposal.conflict_ids),
                 },
             )
+        reviews = self._collect_peer_reviews(conflicts, proposals)
+        for review in reviews:
+            session.transcript.record(
+                sender=review.reviewer_subsystem.value,
+                recipients=(review.proposal_subsystem.value, "planner"),
+                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
+                payload={
+                    "proposal_subsystem": review.proposal_subsystem.value,
+                    "knob_name": review.knob_name,
+                    "disposition": review.disposition.value,
+                    "rationale": review.rationale,
+                    "suggested_delta": review.suggested_delta,
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
+            memory_tag = "fallback" if cached.is_fallback else "llm"
             decision = NegotiationDecision(
                 accepted=True,
                 isru_reduction_fraction=min(
@@ -968,7 +1065,7 @@ class CentralPlanner:
                 ),
                 crew_reduction=cached.crew_reduction,
                 dust_degradation_adjustment=cached.dust_degradation_adjustment,
-                rationale=f"[memory hit][{'fallback' if cached.is_fallback else 'llm'}] {cached.rationale}",
+                rationale=f"[memory hit][{memory_tag}] {cached.rationale}",
                 is_fallback=cached.is_fallback,
                 source="memory",
             )
@@ -993,6 +1090,7 @@ class CentralPlanner:
                 current_reduction=current_reduction,
                 decision=decision,
                 proposals=proposals,
+                reviews=reviews,
                 session=session,
             )
             return decision, session
@@ -1011,6 +1109,7 @@ class CentralPlanner:
                     capabilities=self.registry.all_capabilities(),
                     knowledge_context=knowledge_context,
                     proposals=proposals,
+                    reviews=reviews,
                 )
             )
             if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
@@ -1024,6 +1123,7 @@ class CentralPlanner:
                         self.registry.all_capabilities(),
                         knowledge_context,
                         proposals,
+                        reviews,
                     )
                 )
         else:
@@ -1037,6 +1137,7 @@ class CentralPlanner:
                     self.registry.all_capabilities(),
                     knowledge_context,
                     proposals,
+                    reviews,
                 )
             )
 
@@ -1048,6 +1149,7 @@ class CentralPlanner:
                 current_reduction,
                 knowledge_context,
                 proposals,
+                reviews,
             )
             is_fallback = True
             source = "fallback"
@@ -1081,6 +1183,7 @@ class CentralPlanner:
             current_reduction=current_reduction,
             decision=decision,
             proposals=proposals,
+            reviews=reviews,
             session=session,
         )
         return decision, session

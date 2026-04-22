@@ -21,8 +21,10 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
-    TradeoffProposal,
     TradeoffKnob,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
     UncertaintyBounds,
 )
 
@@ -87,6 +89,32 @@ class PowerSpecialist:
                 conflict_ids=relevant,
             ),
         )
+
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        if not any(
+            cid.startswith("coupling.power") or cid == "coupling.isru_power_share.high"
+            for cid in conflict_ids
+        ):
+            return ()
+        reviews = [
+            TradeoffReview(
+                reviewer_subsystem=Subsystem.POWER,
+                proposal_subsystem=proposal.subsystem,
+                knob_name=proposal.knob_name,
+                disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
+                rationale=(
+                    "Power acknowledges the peer proposal as a credible contributor to "
+                    "margin recovery under constrained generation."
+                ),
+            )
+            for proposal in proposals
+            if proposal.subsystem is not Subsystem.POWER
+        ]
+        return tuple(reviews)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.POWER:

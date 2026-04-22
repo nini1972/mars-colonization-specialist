@@ -42,6 +42,13 @@ class SpecialistCapability:
     tradeoff_knobs: tuple[TradeoffKnob, ...]
 
 
+class TradeoffReviewDisposition(StrEnum):
+    """Supported peer-review outcomes for specialist-authored proposals."""
+
+    ACKNOWLEDGE = "acknowledge"
+    COUNTER = "counter"
+
+
 @dataclass(frozen=True, slots=True)
 class TradeoffProposal:
     """A deterministic specialist-authored proposal for one tradeoff knob."""
@@ -56,6 +63,25 @@ class TradeoffProposal:
         if self.suggested_delta < 0.0:
             raise ValueError(
                 f"TradeoffProposal '{self.knob_name}': suggested_delta must be non-negative "
+                f"(got {self.suggested_delta})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TradeoffReview:
+    """A deterministic specialist review of a peer-authored proposal."""
+
+    reviewer_subsystem: Subsystem
+    proposal_subsystem: Subsystem
+    knob_name: str
+    disposition: TradeoffReviewDisposition
+    rationale: str
+    suggested_delta: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.suggested_delta is not None and self.suggested_delta < 0.0:
+            raise ValueError(
+                f"TradeoffReview '{self.knob_name}': suggested_delta must be non-negative "
                 f"(got {self.suggested_delta})"
             )
 

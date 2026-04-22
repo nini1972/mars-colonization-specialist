@@ -55,6 +55,7 @@ from mars_agent.specialists.contracts import (
     SpecialistCapability,
     Subsystem,
     TradeoffProposal,
+    TradeoffReview,
 )
 
 _adapter = MarsMCPAdapter()
@@ -212,6 +213,12 @@ class _SupportsCapabilitiesAndAnalyze(Protocol):
 
     def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]: ...
 
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]: ...
+
 
 class _FailingSpecialist:
     """Dev-only specialist wrapper that raises on analyze()."""
@@ -235,6 +242,13 @@ class _FailingSpecialist:
 
     def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
         return self._delegate.propose_tradeoffs(conflict_ids)
+
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        return self._delegate.review_peer_proposals(proposals, conflict_ids)
 
 
 def _apply_dev_failure_injection() -> None:
