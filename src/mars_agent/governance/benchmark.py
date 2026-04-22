@@ -17,6 +17,26 @@ from mars_agent.simulation.pipeline import SimulationReport
 _DEFAULT_RELEASE_POLICY_PATH = Path("configs/knowledge_release_policy.toml")
 
 
+def list_policy_profiles(
+    *,
+    policy_path: Path = _DEFAULT_RELEASE_POLICY_PATH,
+) -> tuple[dict[str, object], ...]:
+    """Return configured benchmark profiles for operator-facing discovery."""
+
+    config = load_release_policy_config(policy_path)
+    return tuple(
+        {
+            "name": profile.name,
+            "policy_version": profile.policy_version,
+            "policy_source": profile.policy_source,
+            "is_default": profile.name == config.default_benchmark_profile,
+            "metrics": [reference.metric for reference in profile.references],
+            "reference_count": len(profile.references),
+        }
+        for profile in config.benchmark_profiles
+    )
+
+
 def default_references() -> tuple[BenchmarkReference, ...]:
     """Default benchmark references and tolerances for mission review."""
 

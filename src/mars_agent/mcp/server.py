@@ -97,6 +97,7 @@ _TOOL_PERMISSION_BY_NAME = {
     "mars.simulate": "simulate",
     "mars.governance": "governance",
     "mars.benchmark": "benchmark",
+    "mars.benchmark.profiles": "benchmark",
     "mars.release": "release",
     "mars.telemetry.overview": "telemetry",
     "mars.telemetry.events": "telemetry",
@@ -855,6 +856,9 @@ def _validate_transport_arguments(tool_name: str, arguments: Mapping[str, object
         _optional_string(arguments, "benchmark_profile")
         return
 
+    if tool_name == "mars.benchmark.profiles":
+        return
+
     if tool_name == "mars.release":
         _require_string(arguments, "plan_id")
         _require_string(arguments, "simulation_id")
@@ -1154,6 +1158,15 @@ async def _invoke_runtime_tool(
 
         return await _run_bounded_sync(
             _compute_benchmark,
+            timeout_seconds=_configured_tool_timeout_seconds(),
+        )
+
+    if tool_name == "mars.benchmark.profiles":
+        def _compute_benchmark_profiles() -> dict[str, object]:
+            return _as_object_dict(_adapter.invoke(tool_name, arguments))
+
+        return await _run_bounded_sync(
+            _compute_benchmark_profiles,
             timeout_seconds=_configured_tool_timeout_seconds(),
         )
 
@@ -1520,6 +1533,20 @@ async def mars_benchmark(
     )
 
 
+async def mars_benchmark_profiles(
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """List configured benchmark policy profiles available to operators."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.benchmark.profiles",
+        arguments={},
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
 async def mars_release(
     plan_id: str,
     simulation_id: str,
@@ -1641,6 +1668,7 @@ mcp.tool(name="mars.plan")(mars_plan)
 mcp.tool(name="mars.simulate")(mars_simulate)
 mcp.tool(name="mars.governance")(mars_governance)
 mcp.tool(name="mars.benchmark")(mars_benchmark)
+mcp.tool(name="mars.benchmark.profiles")(mars_benchmark_profiles)
 mcp.tool(name="mars.release")(mars_release)
 mcp.tool(name="mars.telemetry.overview")(mars_telemetry_overview)
 mcp.tool(name="mars.telemetry.events")(mars_telemetry_events)

@@ -8,7 +8,12 @@ from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 
-from mars_agent.governance import BenchmarkHarness, GovernanceGate, GovernanceWorkflow
+from mars_agent.governance import (
+    BenchmarkHarness,
+    GovernanceGate,
+    GovernanceWorkflow,
+    list_policy_profiles,
+)
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.orchestration import CentralPlanner, MissionGoal, MissionPhase
 from mars_agent.orchestration.models import PlanResult
@@ -247,6 +252,11 @@ class MarsMCPAdapter:
                 required_arguments=("plan_id", "simulation_id"),
             ),
             ToolDefinition(
+                name="mars.benchmark.profiles",
+                description="List configured benchmark policy profiles available to operators.",
+                required_arguments=(),
+            ),
+            ToolDefinition(
                 name="mars.release",
                 description=(
                     "Finalize a quarterly or hotfix governance release and optionally "
@@ -308,6 +318,9 @@ class MarsMCPAdapter:
                 simulation_id=simulation_id,
                 benchmark_profile=benchmark_profile,
             )
+
+        if tool_name == "mars.benchmark.profiles":
+            return self._benchmark_profiles()
 
         if tool_name == "mars.release":
             plan_id = _require_string(arguments, "plan_id")
@@ -409,6 +422,16 @@ class MarsMCPAdapter:
         report = harness.run(plan=plan, simulation=simulation)
         return {
             "benchmark": to_mcp_value(report),
+        }
+
+    def _benchmark_profiles(self) -> dict[str, MCPValue]:
+        profiles = list_policy_profiles(policy_path=self.benchmark_policy_path)
+        default_profile = next(
+            str(profile["name"]) for profile in profiles if profile["is_default"] is True
+        )
+        return {
+            "default_profile": default_profile,
+            "benchmark_profiles": to_mcp_value(profiles),
         }
 
     def _release(

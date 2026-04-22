@@ -131,6 +131,7 @@ def test_mcp_tool_catalog_exposes_phase7_surface() -> None:
         "mars.simulate",
         "mars.governance",
         "mars.benchmark",
+        "mars.benchmark.profiles",
         "mars.release",
     ]
 
@@ -334,3 +335,18 @@ def test_mcp_benchmark_can_select_named_policy_profile() -> None:
     assert isinstance(payload, dict)
     assert payload["profile"] == "nasa-esa-mission-review-permissive"
     assert payload["policy_version"] == "2026.03-dev"
+
+
+def test_mcp_exposes_configured_benchmark_profiles() -> None:
+    adapter = MarsMCPAdapter()
+
+    result = adapter.invoke("mars.benchmark.profiles", {})
+
+    assert result["default_profile"] == "nasa-esa-mission-review"
+    profiles_payload = result["benchmark_profiles"]
+    assert isinstance(profiles_payload, list)
+    profile_names = {
+        item["name"] for item in profiles_payload if isinstance(item, dict) and "name" in item
+    }
+    assert "nasa-esa-mission-review" in profile_names
+    assert "nasa-esa-mission-review-permissive" in profile_names

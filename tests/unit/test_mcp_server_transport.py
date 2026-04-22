@@ -23,6 +23,7 @@ from mars_agent.mcp.adapter import MarsMCPAdapter
 from mars_agent.mcp.persistence import PersistenceCorruptionError, PersistenceUnavailableError
 from mars_agent.mcp.server import (
     mars_benchmark,
+    mars_benchmark_profiles,
     mars_governance,
     mars_plan,
     mars_release,
@@ -662,6 +663,23 @@ def test_transport_benchmark_accepts_named_policy_profile() -> None:
     assert isinstance(payload, dict)
     assert payload["profile"] == "nasa-esa-mission-review-permissive"
     assert payload["policy_version"] == "2026.03-dev"
+
+
+def test_transport_exposes_benchmark_profile_catalog() -> None:
+    actual = _call_direct_sync(
+        mars_benchmark_profiles(
+            request_id="req-direct-benchmark-profiles",
+        )
+    )
+
+    assert actual["request_id"] == "req-direct-benchmark-profiles"
+    payload = _unwrap_success(actual)
+    assert payload["default_profile"] == "nasa-esa-mission-review"
+    profiles = payload["benchmark_profiles"]
+    assert isinstance(profiles, list)
+    names = {item["name"] for item in profiles if isinstance(item, dict) and "name" in item}
+    assert "nasa-esa-mission-review" in names
+    assert "nasa-esa-mission-review-permissive" in names
 
 
 def test_transport_stdio_call_matches_adapter_and_emits_request_id() -> None:

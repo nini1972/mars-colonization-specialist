@@ -1,7 +1,11 @@
 """Phase 6 governance and release hardening package."""
 
 from mars_agent.governance.audit import AuditTrailExporter
-from mars_agent.governance.benchmark import BenchmarkHarness, default_references
+from mars_agent.governance.benchmark import (
+    BenchmarkHarness,
+    default_references,
+    list_policy_profiles,
+)
 from mars_agent.governance.gate import GovernanceGate
 from mars_agent.governance.models import (
     BenchmarkDelta,
@@ -35,5 +39,6 @@ __all__ = [
     "ReleaseBulletin",
     "ReleaseHardeningManager",
     "default_references",
+    "list_policy_profiles",
     "render_bulletin_markdown",
 ]
