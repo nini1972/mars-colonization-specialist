@@ -12,6 +12,11 @@ from mars_agent.governance.models import (
     ReleaseBulletin,
 )
 from mars_agent.governance.release import ReleaseHardeningManager, render_bulletin_markdown
+from mars_agent.governance.workflow import (
+    GovernanceReleaseResult,
+    GovernanceWorkflow,
+    GovernanceWorkflowReview,
+)
 
 __all__ = [
     "AuditTrailExporter",
@@ -22,6 +27,9 @@ __all__ = [
     "GovernanceGate",
     "GovernanceReport",
     "GovernanceViolation",
+    "GovernanceReleaseResult",
+    "GovernanceWorkflow",
+    "GovernanceWorkflowReview",
     "ReleaseBulletin",
     "ReleaseHardeningManager",
     "default_references",
