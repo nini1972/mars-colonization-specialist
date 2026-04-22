@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from mars_agent.mcp.telemetry import TELEMETRY_SCHEMA_VERSION, TelemetryQueryService
 
 
@@ -201,4 +203,5 @@ def test_telemetry_negotiation_sessions_are_listed_deterministically() -> None:
     assert len(response["items"]) == 2
     assert response["items"][0]["session_id"] == "neg-2"
     assert response["items"][1]["session_id"] == "neg-1"
-    assert response["items"][1]["counter_proposals"][0]["reviewer_subsystem"] == "power"
+    counter_proposals = cast(list[dict[str, object]], response["items"][1]["counter_proposals"])
+    assert counter_proposals[0]["reviewer_subsystem"] == "power"

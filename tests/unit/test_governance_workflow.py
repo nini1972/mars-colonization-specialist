@@ -94,6 +94,30 @@ def test_governance_workflow_finalizes_quarterly_and_exports_audit(
     assert "benchmark" in payload
 
 
+def test_governance_workflow_exports_release_bundle(tmp_path: Path) -> None:
+    plan = CentralPlanner().plan(goal=_goal(), evidence=_evidence())
+    simulation = SimulationPipeline(seed=42, max_repair_attempts=2).run(plan)
+    workflow = _permissive_workflow()
+    result = workflow.finalize_hotfix(
+        plan=plan,
+        simulation=simulation,
+        version="2026.HF-01",
+        changed_doc_ids=("doc-9",),
+        reason="Critical correction.",
+    )
+
+    bundle = workflow.export_release_bundle(result, tmp_path / "bundle")
+
+    manifest_payload = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
+    audit_payload = json.loads(bundle.audit_path.read_text(encoding="utf-8"))
+    bulletin_text = bundle.bulletin_path.read_text(encoding="utf-8")
+
+    assert manifest_payload["version"] == "2026.HF-01"
+    assert manifest_payload["release_type"] == "hotfix"
+    assert audit_payload["mission_id"] == "mars-phase6-workflow"
+    assert "Release Bulletin 2026.HF-01" in bulletin_text
+
+
 def test_governance_workflow_exports_audit_even_when_release_is_blocked(
     tmp_path: Path,
 ) -> None:

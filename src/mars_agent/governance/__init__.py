@@ -13,6 +13,7 @@ from mars_agent.governance.models import (
 )
 from mars_agent.governance.release import ReleaseHardeningManager, render_bulletin_markdown
 from mars_agent.governance.workflow import (
+    GovernanceReleaseBundlePaths,
     GovernanceReleaseResult,
     GovernanceWorkflow,
     GovernanceWorkflowReview,
@@ -27,6 +28,7 @@ __all__ = [
     "GovernanceGate",
     "GovernanceReport",
     "GovernanceViolation",
+    "GovernanceReleaseBundlePaths",
     "GovernanceReleaseResult",
     "GovernanceWorkflow",
     "GovernanceWorkflowReview",

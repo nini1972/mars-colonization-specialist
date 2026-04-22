@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,6 +34,15 @@ class GovernanceReleaseResult:
     bulletin: ReleaseBulletin
     bulletin_markdown: str
     audit_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GovernanceReleaseBundlePaths:
+    """Filesystem paths for one persisted governance release bundle."""
+
+    manifest_path: Path
+    bulletin_path: Path
+    audit_path: Path
 
 
 @dataclass(slots=True)
@@ -117,5 +127,36 @@ class GovernanceWorkflow:
             manifest=manifest,
             bulletin=bulletin,
             bulletin_markdown=render_bulletin_markdown(bulletin),
+            audit_path=audit_path,
+        )
+
+    def export_release_bundle(
+        self,
+        result: GovernanceReleaseResult,
+        output_dir: Path,
+    ) -> GovernanceReleaseBundlePaths:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"{result.manifest.version}-{result.manifest.release_type}"
+        manifest_path = output_dir / f"{stem}-manifest.json"
+        bulletin_path = output_dir / f"{stem}-bulletin.md"
+        audit_path = output_dir / f"{stem}-audit.json"
+
+        manifest_payload = {
+            "version": result.manifest.version,
+            "release_type": result.manifest.release_type,
+            "created_at": result.manifest.created_at.isoformat(),
+            "changed_doc_ids": list(result.manifest.changed_doc_ids),
+            "notes": result.manifest.notes,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest_payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        bulletin_path.write_text(result.bulletin_markdown, encoding="utf-8")
+        self.audit_exporter.export(result.review.audit_record, audit_path)
+
+        return GovernanceReleaseBundlePaths(
+            manifest_path=manifest_path,
+            bulletin_path=bulletin_path,
             audit_path=audit_path,
         )
