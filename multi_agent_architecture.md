@@ -1,197 +1,141 @@
-Current Architecture
-4 domain specialists (stateless analyzers):
+# Multi-Agent Architecture
 
-ECLSSSpecialist — life support (O₂, water, pressure, power demand)
-PowerSpecialist — solar generation, battery, dust degradation
-ISRUSpecialist — in-situ resource production, water extraction
-HabitatThermodynamicsSpecialist — HVAC, thermal regulation
-5 orchestrators:
+## Current Architecture
 
-CentralPlanner — coordinates specialists sequentially, drives replan loop
-MultiAgentNegotiator — LLM or deterministic conflict resolution
-CouplingChecker — detects cross-domain power/ISRU/ECLSS conflicts
-MissionPhaseStateMachine — manages mission phase transitions
-GovernanceGate — safety/provenance hard gate
-Communication today: entirely synchronous direct function calls — no messages, no events, no async. The "negotiation" is really a top-down circuit breaker on CentralPlanner, not true peer-to-peer negotiation.
+The system currently consists of four domain specialists and five orchestrators.
 
-Key Gaps & Improvement Areas
-#	Gap	Impact
-1	Sequential specialist execution — ECLSS, ISRU, Power, Thermal run one-after-another with no dependency	Wasted latency; they could run in parallel
-2	Dumb deterministic fallback — fixed 20% ISRU reduction per retry, ignores specialist preferences	Sub-optimal plans; may over-reduce
-3	Specialists can't self-describe — no way to ask "what inputs do you accept?" or "what can you trade off?"	Negotiator must hardcode all knobs
-4	Knowledge module not wired into coordination — knowledge/ontology exists but specialists don't use it during conflict resolution	Evidence not informing negotiation
-5	No cross-request learning — negotiation history discarded after each mars.plan call	Same mistakes repeated across missions
-6	No agent registry — specialists hardcoded as fields on CentralPlanner	Can't add/remove specialists without code changes
-7	No specialist health/failure handling — if one specialist throws, the whole plan fails	No graceful degradation
-8	No agent monitoring in dashboard — dashboard shows tool invocations but not per-specialist performance	Blind to which specialist is slow or failing
-Candidate Improvement Tracks
-Track A — Parallel execution (quick win, self-contained)
-Run the 4 specialists concurrently with asyncio.gather() inside the replan loop — low risk, significant latency improvement.
+### Domain specialists
 
-Track B — Smarter negotiation fallback (medium effort)
-Replace the fixed 20%-increment fallback with a conflict-aware strategy: read which subsystems are involved in each conflict and select the most targeted knob.
+- `ECLSSSpecialist` — life support (`O₂`, water, pressure, power demand)
+- `PowerSpecialist` — solar generation, battery, dust degradation
+- `ISRUSpecialist` — in-situ resource production and water extraction
+- `HabitatThermodynamicsSpecialist` — HVAC and thermal regulation
 
-Track C — Specialist capability protocol (larger)
-Add a capabilities() method to each specialist returning what it can trade off — then the negotiator queries specialists for their preferred compromise instead of deciding top-down.
+### Orchestrators
 
-Track D — Persistent negotiation memory (medium)
-Persist resolved conflict patterns to SQLite alongside idempotency state, so repeated mission profiles reuse proven negotiation outcomes.
+- `CentralPlanner` — coordinates specialists and drives the replan loop
+- `MultiAgentNegotiator` — LLM-assisted or deterministic conflict resolution
+- `CouplingChecker` — detects cross-domain power, ISRU, and ECLSS conflicts
+- `MissionPhaseStateMachine` — manages mission phase transitions
+- `GovernanceGate` — enforces safety and provenance hard gates
 
-Track E — Agent health panel in dashboard (UI extension)
-Add a per-specialist metrics fragment showing call count, avg latency, and last outcome — using the existing telemetry infrastructure.
+Communication originally started as entirely synchronous direct function calls. The negotiation stack now has bounded internal message flow, but it still collapses into planner-owned execution rather than an open-ended peer-to-peer runtime.
 
-Which of these tracks interests you most, or should I explore a different angle entirely?
+## Key Gaps and Improvement Areas
 
+| # | Gap | Impact |
+| - | --- | ------ |
+| 1 | Sequential specialist execution — ECLSS, ISRU, Power, and Thermal originally ran one after another with no dependency-aware parallelism | Wasted latency |
+| 2 | Dumb deterministic fallback — fixed 20% ISRU reduction per retry, ignoring specialist preferences | Sub-optimal plans; may over-reduce |
+| 3 | Specialists could not self-describe inputs or trade-off knobs | Negotiator had to hardcode all knobs |
+| 4 | Knowledge was not wired into coordination | Evidence did not inform negotiation |
+| 5 | No cross-request learning | Repeated mission profiles repeated the same mistakes |
+| 6 | No agent registry | Specialists were hardcoded on `CentralPlanner` |
+| 7 | No specialist health or failure isolation | One specialist failure could fail the whole plan |
+| 8 | No agent monitoring in the dashboard | Hard to see which specialist was slow or failing |
 
+## Candidate Improvement Tracks
 
-From the previous session, I had proposed 5 improvement tracks. Quick confirmation on which to start:
+### Track A — Parallel execution
 
-Track	Name	Effort
-A	Parallel specialist execution	Low
-B	Smarter negotiation fallback	Medium
-C	Specialist capability protocol	Large
-D	Persistent negotiation memory	Medium
-E	Agent health panel in dashboard	Medium
-Asked a question (track)
+Run the four specialists concurrently inside the replan loop where dependencies allow it. This was the lowest-risk latency win.
 
-Q: Which improvement track should I start with?
-A: A — Parallel specialist execution (low risk, asyncio.gather)
-Created 5 todos and reviewed planner.py
-Now let me check how plan() is called from the MCP tools to understand the async context:
+### Track B — Smarter negotiation fallback
 
-Searched for regex and text in multiple files
-The dependency graph is clear: ECLSS + ISRU + Thermal are independent → run in parallel; Power must wait for ECLSS + ISRU to compute critical_load_kw. I'll implement this with concurrent.futures.ThreadPoolExecutor, keeping the sync public API intact (it's already called from inside anyio.to_thread.run_sync).
+Replace the fixed 20%-increment fallback with a conflict-aware strategy that chooses the most targeted knob for the active conflict set.
 
-Edited
-planner.py+1-0
-Now update _run_modules to fan out the three independent specialists in parallel:
+### Track C — Specialist capability protocol
 
-Edited
-planner.py+13-6
-Now verify the full _run_modules region looks correct:
+Add a `capabilities()` method to each specialist so the negotiator can query supported inputs, outputs, and preferred compromise knobs instead of deciding top-down.
 
-Read planner.py, lines 276 to 320
+### Track D — Persistent negotiation memory
 
-Good. Now run the test suite to make sure everything still passes:
+Persist resolved conflict patterns to SQLite alongside idempotency state so repeated mission profiles can reuse proven negotiation outcomes.
 
-Executed test suite and verified results
-All 6 pass. Now run the full suite:
+### Track E — Agent health panel
 
-Executed tests in unit directory
-112 tests pass. Now run Codacy analysis on the modified file:
+Add a per-specialist metrics fragment showing call count, average latency, and last outcome by reusing the existing telemetry infrastructure.
 
-Ran codacy_cli_analyze codacy/codacy-mcp-server (MCP Server)
-Noted pre-existing complexity warning on _thermal_request
-Clean — the one Lizard warning on _thermal_request (52 lines) is pre-existing and unrelated to our change.
+## Delivery History
 
-Completed: Run test suite and verify (3/4)
+The initial exploration proposed Tracks A-E. Track A was selected first because the dependency graph was already clear: ECLSS, ISRU, and Thermal could run in parallel, while Power had to wait for their outputs to compute `critical_load_kw`. That change shipped with a `ThreadPoolExecutor` and preserved the synchronous public planner contract.
 
-Track A is done. Here's what changed in planner.py:
+### Latest Alignment Update (Phase 10c Step 3)
 
-_run_modules now runs in two waves:
+- Async planner soak automation is implemented and documented.
+- Local harness: `scripts/soak_planner.py`
+- PowerShell wrapper: `scripts/soak-planner.ps1`
+- Deterministic comparison envelope: `--mode both --requests 240 --concurrency 24 --timeout-seconds 20`
+- Artifact output contract: `data/processed/planner-soak-local.json` (local) and `data/processed/planner-soak-ci.json` (CI)
+- CI trend job is in place in `.github/workflows/ci.yml` as `planner-soak-trend`.
+- Artifact upload name: `planner-soak-ci`
 
-Wave 1 (parallel): ECLSSSpecialist, ISRUSpecialist, HabitatThermodynamicsSpecialist submit to a ThreadPoolExecutor(max_workers=3) simultaneously — these three are fully independent.
-Wave 2 (sequential): PowerSpecialist runs after wave 1, since it needs critical_load_kw computed from the ECLSS + ISRU outputs.
-No public API changes — plan() remains synchronous, all 112 tests pass, Codacy clean.
+Operational intent: keep sync and async planner performance comparable over time and support staged rollout decisions for `MARS_MCP_PLANNER_ASYNC=true` with artifact-backed trend evidence.
 
-Parallelism profile: On CPython the GIL will still serialize pure-Python math tightly, but the architecture is now correct — any I/O (LLM calls, DB lookups, external sensors) a specialist adds in the future will immediately benefit from true concurrency at no extra cost.
+### Latest Alignment Update (Phase 11 Step 1)
 
-Latest Alignment Update (Phase 10c Step 3)
-
-- Async planner soak automation is now implemented and documented:
-	- Local harness: `scripts/soak_planner.py`
-	- PowerShell wrapper: `scripts/soak-planner.ps1`
-	- Deterministic comparison envelope: `--mode both --requests 240 --concurrency 24 --timeout-seconds 20`
-	- Artifact output contract: `data/processed/planner-soak-local.json` (local) and `data/processed/planner-soak-ci.json` (CI)
-- CI trend job is now in place:
-	- Workflow: `.github/workflows/ci.yml`
-	- Job: `planner-soak-trend`
-	- Upload artifact name: `planner-soak-ci`
-
-Operational intent: keep sync vs async planner performance and reliability comparable over time, and support staged rollout decisions for `MARS_MCP_PLANNER_ASYNC=true` with artifact-backed trend evidence.
-
-Latest Alignment Update (Phase 11 Step 1)
-
-- Deterministic negotiation protocol groundwork is now implemented internally.
+- Deterministic negotiation protocol groundwork is implemented internally.
 - New in-process protocol primitives live in `src/mars_agent/orchestration/negotiation_protocol.py`:
-	- `NegotiationSession`
-	- `NegotiationTranscript`
-	- `NegotiationMessage`
-	- `NegotiationDecision`
+  - `NegotiationSession`
+  - `NegotiationTranscript`
+  - `NegotiationMessage`
+  - `NegotiationDecision`
 - `CentralPlanner` now wraps every replan attempt in a canonical transcript with stable message sequencing and sorted recipients.
 - Current message flow is:
-	- `session_started`
-	- `conflict_detected`
-	- `proposal_requested`
-	- one of `proposal_submitted` | `fallback_applied` | `memory_replayed`
-	- `proposal_accepted`
-	- `session_closed`
-- This does not yet make the specialists peer-to-peer participants. The planner still hosts the session and the negotiator still produces the tradeoff decision. The change is intentionally internal so `mars.plan` responses, telemetry contracts, idempotency semantics, and MCP payload shapes remain unchanged.
-- Phase 11 Step 2 should move specialist tradeoff proposals onto this session model, with deterministic scheduling preserved across sync and async planner paths.
+  - `session_started`
+  - `conflict_detected`
+  - `proposal_requested`
+  - one of `proposal_submitted`, `fallback_applied`, or `memory_replayed`
+  - `proposal_accepted`
+  - `session_closed`
+- Specialists are not yet peer-to-peer participants at this step. The planner still hosts the session and the negotiator still produces the trade-off decision.
 
-Latest Alignment Update (Phase 11 Step 2)
+### Latest Alignment Update (Phase 11 Step 2)
 
-- Specialist-authored proposals are now active inside the deterministic session layer.
+- Specialist-authored proposals are active inside the deterministic session layer.
 - Each specialist can emit deterministic `TradeoffProposal` objects for relevant conflict IDs:
-	- ECLSS -> `crew_reduction`
-	- ISRU -> `isru_reduction_fraction`
-	- Power -> `dust_degradation_adjustment`
-	- HabitatThermodynamics -> `thermal_power_budget_reduction`
-- `CentralPlanner` now gathers proposals from impacted specialists, records them as `proposal_submitted` transcript entries, and passes the proposal set into both:
-	- `MultiAgentNegotiator._build_messages()` for LLM-assisted negotiation
-	- `_conflict_aware_fallback()` for deterministic non-LLM resolution
-- This is the first point where tradeoff proposals are authored by specialists rather than synthesized entirely by planner-owned static logic.
-- The system is still not fully peer-to-peer yet:
-	- the planner still hosts the session
-	- specialists do not yet consume one another's messages directly
-	- the final executable decision still collapses into the existing plan/replan contract
-- Phase 11 Step 3 should expose transcript/proposal observability and then introduce bounded specialist-to-specialist message handling on top of the current deterministic scheduler.
+  - `ECLSS` -> `crew_reduction`
+  - `ISRU` -> `isru_reduction_fraction`
+  - `Power` -> `dust_degradation_adjustment`
+  - `HabitatThermodynamics` -> `thermal_power_budget_reduction`
+- `CentralPlanner` now gathers proposals from impacted specialists, records them as `proposal_submitted` transcript entries, and passes them into both:
+  - `MultiAgentNegotiator._build_messages()` for LLM-assisted negotiation
+  - `_conflict_aware_fallback()` for deterministic non-LLM resolution
+- Proposal authorship moved away from planner-owned static logic while preserving the existing planner and MCP contracts.
 
-Latest Alignment Update (Phase 11 Step 3)
+### Latest Alignment Update (Phase 11 Step 3)
 
-- Negotiation transcript observability is now implemented on internal telemetry/dashboard surfaces.
-- `CentralPlanner` publishes completed negotiation sessions via an observer hook, keeping the planning result and MCP tool payloads unchanged.
-- MCP telemetry now stores recent negotiation sessions separately from tool invocation events, so transcript visibility does not distort existing overview/event counts.
-- Dashboard now exposes a `Negotiation Sessions` fragment that shows:
-	- recent session IDs / rounds / mission phase
-	- decision source (`llm`, `fallback`, or `memory`)
-	- specialist-authored proposals
-	- ordered transcript messages for the session
-- This completes the observability precondition for moving to bounded agent-to-agent message handling.
-- The system is still not fully peer-to-peer yet:
-	- specialists still do not consume each other's transcript messages directly
-	- the planner still hosts and closes the session
-	- the final plan contract remains unchanged
-- Phase 11 Step 4 should introduce deterministic specialist-to-specialist message consumption while reusing the transcript, observer, and dashboard surfaces added in Steps 1-3.
+- Negotiation transcript observability is implemented on internal telemetry and dashboard surfaces.
+- `CentralPlanner` publishes completed negotiation sessions via an observer hook without changing plan results or MCP payloads.
+- MCP telemetry stores recent negotiation sessions separately from tool invocation events.
+- The dashboard exposes a `Negotiation Sessions` fragment that shows:
+  - recent session IDs, rounds, and mission phase
+  - decision source (`llm`, `fallback`, or `memory`)
+  - specialist-authored proposals
+  - ordered transcript messages for the session
+- This completed the observability precondition for bounded agent-to-agent message handling.
 
-Latest Alignment Update (Phase 11 Step 4)
+### Latest Alignment Update (Phase 11 Step 4)
 
-- Bounded specialist-to-specialist message handling is now active inside the deterministic session scheduler.
-- Specialists still do not run arbitrary conversations, but they now consume peer-authored proposals through `review_peer_proposals()` and emit deterministic peer review outcomes in one bounded review round.
-- `CentralPlanner` now records `proposal_reviewed` transcript messages after the initial `proposal_submitted` wave and before the final fallback/LLM decision.
-- Peer review is now threaded into both decision paths:
-	- `MultiAgentNegotiator._build_messages()` receives peer review context for LLM-assisted negotiation.
-	- `_conflict_aware_fallback()` now only credits proposal-derived fallback deltas that were acknowledged by peer review when reviews are present.
+- Bounded specialist-to-specialist message handling is active inside the deterministic session scheduler.
+- Specialists do not run arbitrary conversations, but they now consume peer-authored proposals through `review_peer_proposals()` and emit deterministic peer review outcomes in one bounded review round.
+- `CentralPlanner` records `proposal_reviewed` transcript messages after the initial `proposal_submitted` wave and before the final fallback or LLM decision.
+- Peer review is threaded into both decision paths:
+  - `MultiAgentNegotiator._build_messages()` receives peer review context for LLM-assisted negotiation.
+  - `_conflict_aware_fallback()` only credits proposal-derived fallback deltas that were acknowledged by peer review when reviews are present.
 - This means specialist-to-specialist message consumption is no longer just observable; it now influences the deterministic resolution path.
-- The system is still not fully decentralized yet:
-	- the planner still schedules and bounds the round
-	- specialists emit reviews, not open-ended conversations
-	- acceptance and plan mutation still collapse into the existing planner contract
-- A next Phase 5 would introduce deterministic counter-proposal exchange or multi-round bounded negotiation if that extra complexity is justified by mission outcomes.
 
-Latest Alignment Update (Phase 11 Step 5)
+### Latest Alignment Update (Phase 11 Step 5)
 
-- A bounded counter-proposal round is now active inside the deterministic session scheduler.
-- `TradeoffReviewDisposition.COUNTER` no longer stops at annotation: when a peer review supplies a suggested delta, `CentralPlanner` materializes it into a bounded second-round counter-proposal.
-- `CentralPlanner` now records `counter_proposal_submitted` transcript messages after the first review wave and before the final LLM/fallback decision.
-- Counter-proposals are now threaded into both decision paths:
-	- `MultiAgentNegotiator._build_messages()` receives an explicit counter-proposal section in the user prompt.
-	- `_conflict_aware_fallback()` incorporates bounded counter-proposal deltas alongside acknowledged first-round proposals.
+- A bounded counter-proposal round is active inside the deterministic session scheduler.
+- `TradeoffReviewDisposition.COUNTER` no longer stops at annotation. When a peer review supplies a suggested delta, `CentralPlanner` materializes it into a bounded second-round counter-proposal.
+- `CentralPlanner` now records `counter_proposal_submitted` transcript messages after the first review wave and before the final fallback or LLM decision.
+- Counter-proposals are threaded into both decision paths:
+  - `MultiAgentNegotiator._build_messages()` receives an explicit counter-proposal section in the user prompt.
+  - `_conflict_aware_fallback()` incorporates bounded counter-proposal deltas alongside acknowledged first-round proposals.
 - Negotiation telemetry and the dashboard now expose counter-proposals as a separate bounded artifact, preserving observability of the second round.
-- The system is still intentionally bounded:
-	- the planner still schedules and closes the session
-	- counter-proposals do not trigger unbounded conversation loops
-	- the final result still collapses into the existing planner and MCP contracts
-- A likely next step would be selective re-review or convergence rules only when counter-proposals materially diverge from first-round proposals.
-
-Claude Sonnet 4.6 • 1x
+- The system remains intentionally bounded:
+  - the planner still schedules and closes the session
+  - counter-proposals do not trigger unbounded conversation loops
+  - the final result still collapses into the existing planner and MCP contracts
+- A likely next step is selective re-review or convergence rules only when counter-proposals materially diverge from first-round proposals.

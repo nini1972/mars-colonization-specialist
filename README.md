@@ -2,32 +2,42 @@
 
 Phases 0-7 baseline for deterministic, testable implementation.
 
-## Quick start (PowerShell)
+## Quick Start (PowerShell)
 
 ```powershell
 ./scripts/setup.ps1
 ./scripts/check.ps1
 ```
-## Start dashboard
 
+## Start Dashboard
+
+```powershell
 .venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+```
 
 If you want to use a different port:
 
+```powershell
 .venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload --port 8080
+```
 
-navigate to:
-http://localhost:8000/dashboard
-
+Navigate to [http://localhost:8000/dashboard](http://localhost:8000/dashboard).
 
 Remark: If you see the "persistence degraded" warning in the logs, it means the dashboard is running with the in-memory persistence backend instead of SQLite. This is expected if you haven't set the `MARS_MCP_PERSISTENCE_BACKEND` environment variable to `sqlite`. The dashboard will still function, but any state will be lost on restart.
+
 Fix: set the env var before starting the dashboard:
+
+```powershell
 $env:MARS_MCP_PERSISTENCE_BACKEND = "sqlite"
 .venv\Scripts\python.exe -m uvicorn mars_agent.dashboard_app:app --reload
+```
 
 Or permanently in your shell session:
+
+```powershell
 $env:MARS_MCP_PERSISTENCE_SQLITE_PATH = ".\.mars_mcp_runtime.sqlite3"
 $env:MARS_MCP_PERSISTENCE_BACKEND    = "sqlite"
+```
 
 When using Docker/docker-compose, the env var is already defaulted to sqlite in docker-compose.yml and docker-run.ps1 — so the message only appears in the plain uvicorn dev workflow where no env vars are set.
 
@@ -39,46 +49,87 @@ $env:MARS_DEV_FAIL_SPECIALIST = "eclss"   # eclss | isru | power | habitat_therm
 docker compose up --build
 ```
 
-Then invoke `mars.plan` through the running MCP endpoint (for example `your_script.py`) and confirm the dashboard Agent Health panel shows a fault (`status-warn`) and increased fault count.
+Then invoke `mars.plan` through the running MCP endpoint, for example via `your_script.py`, and confirm the dashboard Agent Health panel shows a fault (`status-warn`) and increased fault count.
+
+```powershell
 .\.venv\Scripts\python.exe .\your_script.py
+```
+
 To disable injection:
 
 ```powershell
-Remove-Item $env:MARS_DEV_FAIL_SPECIALIST
+Remove-Item Env:MARS_DEV_FAIL_SPECIALIST
 ```
 
-## Start Docker-compose
-Option A — docker-compose (recommended, handles build + run together):
+## Start Docker Compose
 
-# From the repo root — builds image and starts the dashboard
+Option A — `docker-compose` (recommended, handles build and run together):
+
+Build and start from the repo root:
+
+```powershell
 docker compose up --build
+```
 
-# Or detached (background):
+Or detached:
+
+```powershell
 docker compose up --build -d
+```
 
-Then navigate to http://localhost:8000/dashboard.
-To stop:docker compose down
-to stop and remove Sqlite volume:
+Then navigate to [http://localhost:8000/dashboard](http://localhost:8000/dashboard).
+
+To stop:
+
+```powershell
+docker compose down
+```
+
+To stop and remove the SQLite volume:
+
+```powershell
 docker compose down -v
+```
 
 Option B — PowerShell scripts (build once, run separately):
 
-# 1. Build the image
+1. Build the image:
+
+```powershell
 ./scripts/docker-build.ps1
+```
 
-# 2. Run the container (foreground)
+1. Run the container in the foreground:
+
+```powershell
 ./scripts/docker-run.ps1
+```
 
-# Run detached on a different port:
+1. Run detached on a different port:
+
+```powershell
 ./scripts/docker-run.ps1 -Port 8080 -Detach
+```
 
-Then navigate to http://localhost:8000/dashboard. To stop the detached container:docker stop mars_dashboard
+Then navigate to [http://localhost:8000/dashboard](http://localhost:8000/dashboard).
+
+To stop the detached container:
+
+```powershell
+docker stop mars_dashboard
+```
 
 Then rebuild:
-docker compose up --build
-# or
-./scripts/docker-build.ps1
 
+```powershell
+docker compose up --build
+```
+
+Or:
+
+```powershell
+./scripts/docker-build.ps1
+```
 
 SQLite persistence is auto-configured in both paths — the container stores the .sqlite3 file in the mars_data named Docker volume at /data/mars_mcp_runtime.sqlite3. The "persistence degraded" warning will not appear when running via Docker.
 
@@ -277,9 +328,7 @@ The MCP server now emits structured observability signals while preserving the e
   - Primary path: OpenAI Responses API (`client.responses.create`) for sync and async modes.
   - Fallback path: OpenAI Chat Completions (`client.chat.completions.create`) when Responses API is unavailable, returns empty output, or errors.
   - Runtime toggle: `MARS_LLM_OPENAI_USE_RESPONSES=true|false` (default `true`) to force legacy Chat Completions when needed.
-  - Migration reference: https://developers.openai.com/api/docs/guides/migrate-to-responses
-
-
+  - Migration reference: [OpenAI guide: Migrate to Responses](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 
 ### Multi-agent architecture
 
@@ -290,12 +339,10 @@ The MCP server now emits structured observability signals while preserving the e
 **Improvement tracks:**
 
 | Track | Description | Status |
-|-------|-------------|--------|
+| ----- | ----------- | ------ |
 | A | Parallel specialist execution — ECLSS, ISRU, Thermal run concurrently via `ThreadPoolExecutor`; Power waits on their outputs | ✅ Done (112 tests passing) |
 | B | Smarter negotiation fallback — conflict-aware knob selection instead of fixed 20% ISRU reduction | ✅ Done (116 tests passing) |
 | C | Specialist capability protocol — `capabilities()` method on each specialist so the negotiator can query trade-off preferences; `SpecialistRegistry` for dynamic add/remove | ✅ Done (159 tests passing) |
 | D | Persistent negotiation memory — resolved conflict patterns persisted to SQLite for cross-mission reuse | ✅ Done (125 tests passing) |
 | E | Agent health panel in dashboard — per-specialist call count, avg latency, and last outcome fragment | ✅ Done (133 tests passing) |
 | F | Specialist health and graceful degradation — isolate per-specialist failures, emit degraded plans, and surface fault telemetry in MCP and dashboard | ✅ Done (170 tests passing) |
-
-
