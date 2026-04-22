@@ -126,6 +126,7 @@ def test_run_negotiation_session_records_fallback_transcript() -> None:
         NegotiationMessageKind.PROPOSAL_SUBMITTED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
+        NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
         NegotiationMessageKind.FALLBACK_APPLIED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
@@ -142,6 +143,12 @@ def test_run_negotiation_session_records_fallback_transcript() -> None:
         if message.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
     ]
     assert review_senders == ["isru", "power"]
+    counter_senders = [
+        message.sender
+        for message in session.transcript.messages
+        if message.kind is NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED
+    ]
+    assert counter_senders == ["power"]
 
 
 def test_run_negotiation_session_records_memory_replay_transcript() -> None:
@@ -183,6 +190,7 @@ def test_run_negotiation_session_records_memory_replay_transcript() -> None:
         NegotiationMessageKind.PROPOSAL_SUBMITTED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
+        NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
         NegotiationMessageKind.MEMORY_REPLAYED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
@@ -203,15 +211,62 @@ def test_collect_specialist_proposals_returns_deterministic_sorted_proposals() -
 def test_collect_peer_reviews_returns_deterministic_sorted_reviews() -> None:
     planner = CentralPlanner()
 
-    reviews = planner._collect_peer_reviews((_conflict(),), planner._collect_specialist_proposals((_conflict(),)))
+    reviews = planner._collect_peer_reviews(
+        (_conflict(),),
+        planner._collect_specialist_proposals((_conflict(),)),
+    )
 
     assert [
-        (review.reviewer_subsystem.value, review.proposal_subsystem.value, review.knob_name)
+        (
+            review.reviewer_subsystem.value,
+            review.proposal_subsystem.value,
+            review.knob_name,
+            review.disposition.value,
+        )
         for review in reviews
     ] == [
-        ("isru", "power", "dust_degradation_adjustment"),
-        ("power", "isru", "isru_reduction_fraction"),
+        ("isru", "power", "dust_degradation_adjustment", "acknowledge"),
+        ("power", "isru", "isru_reduction_fraction", "counter"),
     ]
+
+
+def test_collect_counter_proposals_materializes_counter_reviews() -> None:
+    planner = CentralPlanner()
+    proposals = planner._collect_specialist_proposals((_conflict(),))
+    reviews = planner._collect_peer_reviews((_conflict(),), proposals)
+
+    counter_proposals = planner._collect_counter_proposals(proposals, reviews)
+
+    assert [
+        (
+            counter.reviewer_subsystem.value,
+            counter.proposal_subsystem.value,
+            counter.knob_name,
+            counter.suggested_delta,
+        )
+        for counter in counter_proposals
+    ] == [("power", "isru", "isru_reduction_fraction", 0.1)]
+
+
+def test_counter_proposals_influence_conflict_aware_fallback() -> None:
+    planner = CentralPlanner()
+    proposals = planner._collect_specialist_proposals((_conflict(),))
+    reviews = planner._collect_peer_reviews((_conflict(),), proposals)
+    counter_proposals = planner._collect_counter_proposals(proposals, reviews)
+
+    reduction, crew_delta, dust_delta, rationale = planner._conflict_aware_fallback(
+        (_conflict(),),
+        0.0,
+        _knowledge_context(),
+        proposals,
+        reviews,
+        counter_proposals,
+    )
+
+    assert reduction >= 0.1
+    assert crew_delta == 0
+    assert dust_delta >= 0.02
+    assert "counter_proposals=1" in rationale
 
 
 def test_negotiation_observer_receives_session_payload() -> None:
@@ -232,3 +287,4 @@ def test_negotiation_observer_receives_session_payload() -> None:
     assert payload["session_id"]
     assert isinstance(payload["messages"], list)
     assert isinstance(payload["proposals"], list)
+    assert isinstance(payload["counter_proposals"], list)

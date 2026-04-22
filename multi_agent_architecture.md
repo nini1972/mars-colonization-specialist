@@ -179,4 +179,19 @@ Latest Alignment Update (Phase 11 Step 4)
 	- acceptance and plan mutation still collapse into the existing planner contract
 - A next Phase 5 would introduce deterministic counter-proposal exchange or multi-round bounded negotiation if that extra complexity is justified by mission outcomes.
 
+Latest Alignment Update (Phase 11 Step 5)
+
+- A bounded counter-proposal round is now active inside the deterministic session scheduler.
+- `TradeoffReviewDisposition.COUNTER` no longer stops at annotation: when a peer review supplies a suggested delta, `CentralPlanner` materializes it into a bounded second-round counter-proposal.
+- `CentralPlanner` now records `counter_proposal_submitted` transcript messages after the first review wave and before the final LLM/fallback decision.
+- Counter-proposals are now threaded into both decision paths:
+	- `MultiAgentNegotiator._build_messages()` receives an explicit counter-proposal section in the user prompt.
+	- `_conflict_aware_fallback()` incorporates bounded counter-proposal deltas alongside acknowledged first-round proposals.
+- Negotiation telemetry and the dashboard now expose counter-proposals as a separate bounded artifact, preserving observability of the second round.
+- The system is still intentionally bounded:
+	- the planner still schedules and closes the session
+	- counter-proposals do not trigger unbounded conversation loops
+	- the final result still collapses into the existing planner and MCP contracts
+- A likely next step would be selective re-review or convergence rules only when counter-proposals materially diverge from first-round proposals.
+
 Claude Sonnet 4.6 • 1x

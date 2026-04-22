@@ -19,6 +19,7 @@ from mars_agent.orchestration.models import (
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
 from mars_agent.specialists.contracts import (
     Subsystem,
+    TradeoffCounterProposal,
     TradeoffProposal,
     TradeoffReview,
     TradeoffReviewDisposition,
@@ -240,6 +241,31 @@ def test_negotiate_includes_peer_reviews_in_user_message() -> None:
     user_message = call_kwargs.kwargs["messages"][1]["content"]
     assert "Peer review of specialist proposals" in user_message
     assert "Power agrees the cut restores headroom." in user_message
+
+
+def test_negotiate_includes_counter_proposals_in_user_message() -> None:
+    payload = {"accepted": True, "isru_reduction_fraction": 0.4, "rationale": "OK."}
+    negotiator, mock_client = _negotiator_with_mock_client(payload)
+
+    negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+        counter_proposals=(
+            TradeoffCounterProposal(
+                reviewer_subsystem=Subsystem.POWER,
+                proposal_subsystem=Subsystem.ISRU,
+                knob_name="isru_reduction_fraction",
+                suggested_delta=0.1,
+                rationale="Power needs a deeper trim under this shortfall.",
+            ),
+        ),
+    )
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    user_message = call_kwargs.kwargs["messages"][1]["content"]
+    assert "Bounded counter-proposals after peer review" in user_message
+    assert "counters ISRU.isru_reduction_fraction" in user_message
 
 
 def test_negotiate_crew_reduction_propagated() -> None:

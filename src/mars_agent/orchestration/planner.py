@@ -50,8 +50,12 @@ from mars_agent.specialists import (
     Subsystem,
     UncertaintyBounds,
 )
-from mars_agent.specialists.contracts import TradeoffProposal
-from mars_agent.specialists.contracts import TradeoffReview, TradeoffReviewDisposition
+from mars_agent.specialists.contracts import (
+    TradeoffCounterProposal,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -519,6 +523,7 @@ class CentralPlanner:
         knowledge_context: KnowledgeContext | None = None,
         proposals: tuple[TradeoffProposal, ...] = (),
         reviews: tuple[TradeoffReview, ...] = (),
+        counter_proposals: tuple[TradeoffCounterProposal, ...] = (),
     ) -> tuple[float, int, float, str]:
         """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
 
@@ -548,6 +553,31 @@ class CentralPlanner:
             if not reviews or (proposal.subsystem, proposal.knob_name) in acknowledged
         )
 
+        counter_isru = max(
+            (
+                counter.suggested_delta
+                for counter in counter_proposals
+                if counter.knob_name == "isru_reduction_fraction"
+            ),
+            default=0.0,
+        )
+        counter_crew = max(
+            (
+                int(round(counter.suggested_delta))
+                for counter in counter_proposals
+                if counter.knob_name == "crew_reduction"
+            ),
+            default=0,
+        )
+        counter_dust = max(
+            (
+                counter.suggested_delta
+                for counter in counter_proposals
+                if counter.knob_name == "dust_degradation_adjustment"
+            ),
+            default=0.0,
+        )
+
         proposal_isru = max(
             (
                 proposal.suggested_delta
@@ -572,9 +602,9 @@ class CentralPlanner:
             ),
             default=0.0,
         )
-        isru_delta = proposal_isru
-        crew_delta = proposal_crew
-        dust_delta = proposal_dust
+        isru_delta = max(proposal_isru, counter_isru)
+        crew_delta = max(proposal_crew, counter_crew)
+        dust_delta = max(proposal_dust, counter_dust)
 
         # Override/supplement with the static conflict-ID table (and any per-deployment
         # overrides from PlannerSettings) so that conflict-specific logic is preserved.
@@ -610,7 +640,7 @@ class CentralPlanner:
             f"Conflict-aware fallback for [{conflict_list}]: "
             f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f} "
             f"(knowledge_weight={trust_weight:.2f}, specialist_proposals={len(active_proposals)}, "
-            f"peer_reviews={len(reviews)})."
+            f"counter_proposals={len(counter_proposals)}, peer_reviews={len(reviews)})."
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
 
@@ -681,6 +711,47 @@ class CentralPlanner:
             )
         )
 
+    def _collect_counter_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        reviews: tuple[TradeoffReview, ...],
+    ) -> tuple[TradeoffCounterProposal, ...]:
+        if not reviews:
+            return ()
+
+        proposal_conflict_ids = {
+            (proposal.subsystem, proposal.knob_name): proposal.conflict_ids
+            for proposal in proposals
+        }
+        counter_proposals = [
+            TradeoffCounterProposal(
+                reviewer_subsystem=review.reviewer_subsystem,
+                proposal_subsystem=review.proposal_subsystem,
+                knob_name=review.knob_name,
+                suggested_delta=review.suggested_delta,
+                rationale=review.rationale,
+                conflict_ids=proposal_conflict_ids.get(
+                    (review.proposal_subsystem, review.knob_name),
+                    (),
+                ),
+            )
+            for review in reviews
+            if review.disposition is TradeoffReviewDisposition.COUNTER
+            and review.suggested_delta is not None
+        ]
+        return tuple(
+            sorted(
+                counter_proposals,
+                key=lambda counter: (
+                    counter.reviewer_subsystem.value,
+                    counter.proposal_subsystem.value,
+                    counter.knob_name,
+                    counter.suggested_delta,
+                    counter.rationale,
+                ),
+            )
+        )
+
     def _publish_negotiation_session(
         self,
         *,
@@ -690,6 +761,7 @@ class CentralPlanner:
         decision: NegotiationDecision,
         proposals: tuple[TradeoffProposal, ...],
         reviews: tuple[TradeoffReview, ...],
+        counter_proposals: tuple[TradeoffCounterProposal, ...],
         session: NegotiationSession,
     ) -> None:
         observer = self.negotiation_observer
@@ -732,6 +804,17 @@ class CentralPlanner:
                     "suggested_delta": review.suggested_delta,
                 }
                 for review in reviews
+            ],
+            "counter_proposals": [
+                {
+                    "reviewer_subsystem": counter.reviewer_subsystem.value,
+                    "proposal_subsystem": counter.proposal_subsystem.value,
+                    "knob_name": counter.knob_name,
+                    "suggested_delta": counter.suggested_delta,
+                    "rationale": counter.rationale,
+                    "conflict_ids": list(counter.conflict_ids),
+                }
+                for counter in counter_proposals
             ],
             "messages": [
                 {
@@ -912,6 +995,20 @@ class CentralPlanner:
                     "suggested_delta": review.suggested_delta,
                 },
             )
+        counter_proposals = self._collect_counter_proposals(proposals, reviews)
+        for counter in counter_proposals:
+            session.transcript.record(
+                sender=counter.reviewer_subsystem.value,
+                recipients=(counter.proposal_subsystem.value, "planner"),
+                kind=NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
+                payload={
+                    "proposal_subsystem": counter.proposal_subsystem.value,
+                    "knob_name": counter.knob_name,
+                    "suggested_delta": counter.suggested_delta,
+                    "rationale": counter.rationale,
+                    "conflict_ids": list(counter.conflict_ids),
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
@@ -950,6 +1047,7 @@ class CentralPlanner:
                 decision=decision,
                 proposals=proposals,
                 reviews=reviews,
+                counter_proposals=counter_proposals,
                 session=session,
             )
             return decision, session
@@ -963,6 +1061,7 @@ class CentralPlanner:
             knowledge_context=knowledge_context,
             proposals=proposals,
             reviews=reviews,
+            counter_proposals=counter_proposals,
         )
         is_fallback = False
         source = "llm"
@@ -973,6 +1072,7 @@ class CentralPlanner:
                 knowledge_context,
                 proposals,
                 reviews,
+                counter_proposals,
             )
             is_fallback = True
             source = "fallback"
@@ -1007,6 +1107,7 @@ class CentralPlanner:
             decision=decision,
             proposals=proposals,
             reviews=reviews,
+            counter_proposals=counter_proposals,
             session=session,
         )
         return decision, session
@@ -1053,6 +1154,20 @@ class CentralPlanner:
                     "suggested_delta": review.suggested_delta,
                 },
             )
+        counter_proposals = self._collect_counter_proposals(proposals, reviews)
+        for counter in counter_proposals:
+            session.transcript.record(
+                sender=counter.reviewer_subsystem.value,
+                recipients=(counter.proposal_subsystem.value, "planner"),
+                kind=NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
+                payload={
+                    "proposal_subsystem": counter.proposal_subsystem.value,
+                    "knob_name": counter.knob_name,
+                    "suggested_delta": counter.suggested_delta,
+                    "rationale": counter.rationale,
+                    "conflict_ids": list(counter.conflict_ids),
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
@@ -1091,6 +1206,7 @@ class CentralPlanner:
                 decision=decision,
                 proposals=proposals,
                 reviews=reviews,
+                counter_proposals=counter_proposals,
                 session=session,
             )
             return decision, session
@@ -1110,6 +1226,7 @@ class CentralPlanner:
                     knowledge_context=knowledge_context,
                     proposals=proposals,
                     reviews=reviews,
+                    counter_proposals=counter_proposals,
                 )
             )
             if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
@@ -1124,6 +1241,7 @@ class CentralPlanner:
                         knowledge_context,
                         proposals,
                         reviews,
+                        counter_proposals,
                     )
                 )
         else:
@@ -1138,6 +1256,7 @@ class CentralPlanner:
                     knowledge_context,
                     proposals,
                     reviews,
+                    counter_proposals,
                 )
             )
 
@@ -1150,6 +1269,7 @@ class CentralPlanner:
                 knowledge_context,
                 proposals,
                 reviews,
+                counter_proposals,
             )
             is_fallback = True
             source = "fallback"
@@ -1184,6 +1304,7 @@ class CentralPlanner:
             decision=decision,
             proposals=proposals,
             reviews=reviews,
+            counter_proposals=counter_proposals,
             session=session,
         )
         return decision, session

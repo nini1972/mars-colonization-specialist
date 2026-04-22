@@ -21,6 +21,7 @@ class NegotiationMessageKind(StrEnum):
     PROPOSAL_REQUESTED = "proposal_requested"
     PROPOSAL_SUBMITTED = "proposal_submitted"
     PROPOSAL_REVIEWED = "proposal_reviewed"
+    COUNTER_PROPOSAL_SUBMITTED = "counter_proposal_submitted"
     MEMORY_REPLAYED = "memory_replayed"
     FALLBACK_APPLIED = "fallback_applied"
     PROPOSAL_ACCEPTED = "proposal_accepted"

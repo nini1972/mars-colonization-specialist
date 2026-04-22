@@ -162,6 +162,15 @@ def _patch_negotiations(monkeypatch: pytest.MonkeyPatch) -> None:
                             "rationale": "Trim ISRU load first.",
                         }
                     ],
+                    "counter_proposals": [
+                        {
+                            "reviewer_subsystem": "power",
+                            "proposal_subsystem": "isru",
+                            "knob_name": "isru_reduction_fraction",
+                            "suggested_delta": 0.1,
+                            "rationale": "Power needs a deeper trim.",
+                        }
+                    ],
                     "messages": [
                         {
                             "sequence": 0,
@@ -491,6 +500,7 @@ def test_negotiations_fragment_renders_transcript_and_proposals(
     assert "Negotiation Sessions" in response.text
     assert "neg-abc123" in response.text
     assert "Specialist Proposals" in response.text
+    assert "Counter-Proposals" in response.text
     assert "proposal_submitted" in response.text
 
 

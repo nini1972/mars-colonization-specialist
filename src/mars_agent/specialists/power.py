@@ -100,20 +100,40 @@ class PowerSpecialist:
             for cid in conflict_ids
         ):
             return ()
-        reviews = [
-            TradeoffReview(
-                reviewer_subsystem=Subsystem.POWER,
-                proposal_subsystem=proposal.subsystem,
-                knob_name=proposal.knob_name,
-                disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
-                rationale=(
-                    "Power acknowledges the peer proposal as a credible contributor to "
-                    "margin recovery under constrained generation."
-                ),
+        reviews: list[TradeoffReview] = []
+        for proposal in proposals:
+            if proposal.subsystem is Subsystem.POWER:
+                continue
+            if (
+                proposal.knob_name == "isru_reduction_fraction"
+                and proposal.suggested_delta < 0.1
+            ):
+                reviews.append(
+                    TradeoffReview(
+                        reviewer_subsystem=Subsystem.POWER,
+                        proposal_subsystem=proposal.subsystem,
+                        knob_name=proposal.knob_name,
+                        disposition=TradeoffReviewDisposition.COUNTER,
+                        rationale=(
+                            "Power counters that a deeper ISRU trim is needed to restore "
+                            "generation margin under the current shortfall."
+                        ),
+                        suggested_delta=0.1,
+                    )
+                )
+                continue
+            reviews.append(
+                TradeoffReview(
+                    reviewer_subsystem=Subsystem.POWER,
+                    proposal_subsystem=proposal.subsystem,
+                    knob_name=proposal.knob_name,
+                    disposition=TradeoffReviewDisposition.ACKNOWLEDGE,
+                    rationale=(
+                        "Power acknowledges the peer proposal as a credible contributor "
+                        "to margin recovery under constrained generation."
+                    ),
+                )
             )
-            for proposal in proposals
-            if proposal.subsystem is not Subsystem.POWER
-        ]
         return tuple(reviews)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:

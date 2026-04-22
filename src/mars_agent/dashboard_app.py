@@ -644,8 +644,12 @@ def _build_negotiation_panel(*, limit: int = 5) -> dict[str, object]:
         item = dict(_ensure_mapping(raw_item, label="negotiation_sessions.item"))
         messages_raw = item.get("messages", [])
         proposals_raw = item.get("proposals", [])
+        counter_proposals_raw = item.get("counter_proposals", [])
         messages = messages_raw if isinstance(messages_raw, list) else []
         proposals = proposals_raw if isinstance(proposals_raw, list) else []
+        counter_proposals = (
+            counter_proposals_raw if isinstance(counter_proposals_raw, list) else []
+        )
         decision = _ensure_mapping(item.get("decision", {}), label="negotiation_sessions.decision")
         items.append(
             {
@@ -658,9 +662,10 @@ def _build_negotiation_panel(*, limit: int = 5) -> dict[str, object]:
                 "conflict_ids": item.get("conflict_ids", []),
                 "decision": dict(decision),
                 "proposals": proposals,
+                "counter_proposals": counter_proposals,
                 "messages": messages,
                 "message_count": len(messages),
-                "proposal_count": len(proposals),
+                "proposal_count": len(proposals) + len(counter_proposals),
             }
         )
 

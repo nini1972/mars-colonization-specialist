@@ -6,7 +6,7 @@
 
   {% set items = negotiations["items"] %}
   {% if items %}
-  <div class="muted">Latest deterministic negotiation transcripts and specialist-authored proposals.</div>
+  <div class="muted">Latest deterministic negotiation transcripts, proposals, and bounded counter-proposals.</div>
   <div class="stack-list">
     {% for item in items %}
     <section class="detail-block">
@@ -46,6 +46,20 @@
           <strong>{{ proposal.subsystem }}</strong> · {{ proposal.knob_name }} = {{ proposal.suggested_delta }}
           <br>
           <span class="muted">{{ proposal.rationale }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if item.counter_proposals %}
+      <h4>Counter-Proposals</h4>
+      <div class="stack-list">
+        {% for counter in item.counter_proposals %}
+        <div>
+          <strong>{{ counter.reviewer_subsystem }}</strong> counters
+          {{ counter.proposal_subsystem }}.{{ counter.knob_name }} = {{ counter.suggested_delta }}
+          <br>
+          <span class="muted">{{ counter.rationale }}</span>
         </div>
         {% endfor %}
       </div>

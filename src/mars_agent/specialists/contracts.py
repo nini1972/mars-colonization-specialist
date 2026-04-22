@@ -68,6 +68,25 @@ class TradeoffProposal:
 
 
 @dataclass(frozen=True, slots=True)
+class TradeoffCounterProposal:
+    """A bounded second-round counter-proposal synthesized from peer review."""
+
+    reviewer_subsystem: Subsystem
+    proposal_subsystem: Subsystem
+    knob_name: str
+    suggested_delta: float
+    rationale: str
+    conflict_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.suggested_delta < 0.0:
+            raise ValueError(
+                f"TradeoffCounterProposal '{self.knob_name}': suggested_delta must be "
+                f"non-negative (got {self.suggested_delta})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class TradeoffReview:
     """A deterministic specialist review of a peer-authored proposal."""
 

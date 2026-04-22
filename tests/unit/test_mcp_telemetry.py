@@ -171,6 +171,13 @@ def test_telemetry_negotiation_sessions_are_listed_deterministically() -> None:
             "conflict_ids": ["coupling.power_balance.shortfall"],
             "decision": {"source": "fallback", "rationale": "reduce load"},
             "proposals": [{"subsystem": "isru", "knob_name": "isru_reduction_fraction"}],
+            "counter_proposals": [
+                {
+                    "reviewer_subsystem": "power",
+                    "proposal_subsystem": "isru",
+                    "knob_name": "isru_reduction_fraction",
+                }
+            ],
             "messages": [{"sequence": 0, "kind": "session_started"}],
         }
     )
@@ -194,3 +201,4 @@ def test_telemetry_negotiation_sessions_are_listed_deterministically() -> None:
     assert len(response["items"]) == 2
     assert response["items"][0]["session_id"] == "neg-2"
     assert response["items"][1]["session_id"] == "neg-1"
+    assert response["items"][1]["counter_proposals"][0]["reviewer_subsystem"] == "power"
