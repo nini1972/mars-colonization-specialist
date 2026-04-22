@@ -45,4 +45,87 @@
     {% endfor %}
   </div>
   {% endif %}
+
+  <section class="operator-launch">
+    <div class="card-head">
+      <h3>Operator Launch</h3>
+      <span class="pill">Direct MCP runtime dispatch</span>
+    </div>
+    <p class="muted">Run the configured benchmark or release workflow from Mission Ops using a selected benchmark profile.</p>
+
+    <div class="operator-launch-grid">
+      <section class="operator-form-panel">
+        <h3>Run Benchmark</h3>
+        <form class="operator-form" hx-post="/dashboard/fragments/benchmark-launch" hx-target="#benchmark-launch-result" hx-swap="innerHTML">
+          <label for="benchmark-plan-id">Plan ID</label>
+          <input id="benchmark-plan-id" type="text" name="plan_id" placeholder="plan-..." required>
+
+          <label for="benchmark-simulation-id">Simulation ID</label>
+          <input id="benchmark-simulation-id" type="text" name="simulation_id" placeholder="simulation-..." required>
+
+          <label for="benchmark-profile-select">Benchmark Profile</label>
+          <select id="benchmark-profile-select" name="benchmark_profile">
+            {% for profile in catalog["profiles"] %}
+            <option value="{{ profile['name'] }}" {% if profile['is_default'] %}selected{% endif %}>{{ profile["name"] }}</option>
+            {% endfor %}
+          </select>
+
+          <label for="benchmark-request-id">Request ID</label>
+          <input id="benchmark-request-id" type="text" name="request_id" placeholder="Optional idempotency key">
+
+          <button type="submit" class="btn">Run Benchmark</button>
+        </form>
+        <div id="benchmark-launch-result" class="operator-result-slot">
+          <p class="muted">Launch a benchmark run to inspect the runtime response and request identifier.</p>
+        </div>
+      </section>
+
+      <section class="operator-form-panel">
+        <h3>Create Release Bundle</h3>
+        <form class="operator-form" hx-post="/dashboard/fragments/release-launch" hx-target="#release-launch-result" hx-swap="innerHTML">
+          <label for="release-plan-id">Plan ID</label>
+          <input id="release-plan-id" type="text" name="plan_id" placeholder="plan-..." required>
+
+          <label for="release-simulation-id">Simulation ID</label>
+          <input id="release-simulation-id" type="text" name="simulation_id" placeholder="simulation-..." required>
+
+          <label for="release-type">Release Type</label>
+          <select id="release-type" name="release_type">
+            <option value="hotfix" selected>hotfix</option>
+            <option value="quarterly">quarterly</option>
+          </select>
+
+          <label for="release-version">Version</label>
+          <input id="release-version" type="text" name="version" placeholder="2026.HF-03" required>
+
+          <label for="release-doc-ids">Changed Doc IDs</label>
+          <input id="release-doc-ids" type="text" name="changed_doc_ids" placeholder="doc-7, doc-8" required>
+
+          <label for="release-summary">Summary</label>
+          <textarea id="release-summary" name="summary" rows="3" placeholder="Operator-facing release summary." required></textarea>
+
+          <label for="release-profile-select">Benchmark Profile</label>
+          <select id="release-profile-select" name="benchmark_profile">
+            {% for profile in catalog["profiles"] %}
+            <option value="{{ profile['name'] }}" {% if profile['is_default'] %}selected{% endif %}>{{ profile["name"] }}</option>
+            {% endfor %}
+          </select>
+
+          <label for="release-min-confidence">Minimum Confidence</label>
+          <input id="release-min-confidence" type="number" name="min_confidence" min="0" max="1" step="0.01" value="0.85">
+
+          <label for="release-output-dir">Output Directory</label>
+          <input id="release-output-dir" type="text" name="output_dir" placeholder="Optional export directory">
+
+          <label for="release-request-id">Request ID</label>
+          <input id="release-request-id" type="text" name="request_id" placeholder="Optional idempotency key">
+
+          <button type="submit" class="btn">Create Release Bundle</button>
+        </form>
+        <div id="release-launch-result" class="operator-result-slot">
+          <p class="muted">Submit a release bundle request to capture the manifest, bulletin, and export paths returned by the runtime.</p>
+        </div>
+      </section>
+    </div>
+  </section>
 </div>

@@ -1,0 +1,18 @@
+<div class="fragment" data-fragment="operator-launch-result" data-fragment-required="result,ui_schema_version" data-fragment-allowed="result,ui_schema_version">
+  <section class="operator-result {% if result['ok'] %}operator-result-success{% else %}operator-result-failure{% endif %}">
+    <div class="card-head">
+      <h3>{{ result["title"] }}</h3>
+      <div class="profile-pills">
+        <span class="pill">{{ result["tool_name"] }}</span>
+        <span class="pill">{% if result["ok"] %}ok{% else %}error{% endif %}</span>
+      </div>
+    </div>
+    <p class="muted">{{ result["summary"] }}</p>
+    <ul class="keyvals result-keyvals">
+      {% for detail in result["details"] %}
+      <li><span>{{ detail["label"] }}</span><strong>{{ detail["value"] }}</strong></li>
+      {% endfor %}
+    </ul>
+    <pre class="result-json">{{ result["json_body"] }}</pre>
+  </section>
+</div>

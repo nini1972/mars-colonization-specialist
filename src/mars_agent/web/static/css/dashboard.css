@@ -79,6 +79,22 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .profile-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .metric-chip-list { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.7rem; }
 .metric-chip { background: #edf4e8; border: 1px solid #d2dfca; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.8rem; color: #365136; }
+.operator-launch { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px solid #e1eadb; }
+.operator-launch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.9rem; margin-top: 0.8rem; }
+.operator-form-panel { border: 1px solid #dfe8d8; border-radius: 12px; padding: 0.85rem; background: #fbfdf8; }
+.operator-form-panel h3 { margin-top: 0; }
+.operator-form { display: grid; gap: 0.45rem; }
+.operator-form label { font-size: 0.82rem; color: #435243; }
+.operator-form input,
+.operator-form select,
+.operator-form textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 0.45rem 0.55rem; font: inherit; background: #ffffff; color: var(--ink); }
+.operator-form textarea { resize: vertical; }
+.operator-result-slot { margin-top: 0.7rem; }
+.operator-result { border-radius: 12px; padding: 0.8rem; border: 1px solid transparent; }
+.operator-result-success { background: #f2f8ee; border-color: #c8dbc0; }
+.operator-result-failure { background: #fff0e8; border-color: #f2c1a8; }
+.result-keyvals { margin-top: 0.7rem; }
+.result-json { margin: 0.75rem 0 0; padding: 0.7rem; border-radius: 10px; background: #1f2a1f; color: #eff7ea; overflow-x: auto; font-size: 0.8rem; }
 .modal-backdrop {
   position: fixed;
   inset: 0;

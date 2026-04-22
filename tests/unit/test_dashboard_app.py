@@ -216,6 +216,87 @@ def _patch_benchmark_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _patch_benchmark_launch(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    async def _fake_benchmark(
+        *,
+        plan_id: str,
+        simulation_id: str,
+        benchmark_profile: str | None = None,
+        request_id: str | None = None,
+        auth_token: str | None = None,
+    ) -> dict[str, object]:
+        captured.update(
+            {
+                "plan_id": plan_id,
+                "simulation_id": simulation_id,
+                "benchmark_profile": benchmark_profile,
+                "request_id": request_id,
+                "auth_token": auth_token,
+            }
+        )
+        return {
+            "benchmark": {
+                "profile": benchmark_profile or "nasa-esa-mission-review",
+                "policy_version": "2026.03",
+            },
+            "request_id": request_id or "req-benchmark-dashboard",
+            "ok": True,
+        }
+
+    monkeypatch.setattr(dashboard_app, "mars_benchmark", _fake_benchmark)
+    return captured
+
+
+def _patch_release_launch(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    async def _fake_release(
+        *,
+        plan_id: str,
+        simulation_id: str,
+        release_type: str,
+        version: str,
+        changed_doc_ids: list[str],
+        summary: str,
+        benchmark_profile: str | None = None,
+        min_confidence: float = 0.85,
+        output_dir: str | None = None,
+        request_id: str | None = None,
+        auth_token: str | None = None,
+    ) -> dict[str, object]:
+        captured.update(
+            {
+                "plan_id": plan_id,
+                "simulation_id": simulation_id,
+                "release_type": release_type,
+                "version": version,
+                "changed_doc_ids": changed_doc_ids,
+                "summary": summary,
+                "benchmark_profile": benchmark_profile,
+                "min_confidence": min_confidence,
+                "output_dir": output_dir,
+                "request_id": request_id,
+                "auth_token": auth_token,
+            }
+        )
+        return {
+            "release": {
+                "manifest": {
+                    "version": version,
+                    "benchmark_profile": benchmark_profile or "nasa-esa-mission-review",
+                }
+            },
+            "bundle_paths": {"manifest": str(Path("release") / f"{version}.json")},
+            "request_id": request_id or "req-release-dashboard",
+            "ok": True,
+        }
+
+    monkeypatch.setattr(dashboard_app, "mars_release", _fake_release)
+    return captured
+
+
 def test_dashboard_main_page_exposes_ui_schema_version(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -574,6 +655,117 @@ def test_benchmark_profiles_fragment_renders_visual_catalog(
     assert "nasa-esa-mission-review-permissive" in response.text
     assert "load_margin_kw" in response.text
     assert "default" in response.text
+
+
+def test_benchmark_profiles_fragment_includes_operator_launch_forms(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_benchmark_profiles(monkeypatch)
+
+    response = client.get("/dashboard/fragments/benchmark-profiles")
+
+    assert response.status_code == 200
+    assert "Operator Launch" in response.text
+    assert "hx-post=\"/dashboard/fragments/benchmark-launch\"" in response.text
+    assert "hx-post=\"/dashboard/fragments/release-launch\"" in response.text
+    assert "Create Release Bundle" in response.text
+
+
+def test_benchmark_launch_fragment_dispatches_selected_profile(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _patch_benchmark_launch(monkeypatch)
+
+    response = client.post(
+        "/dashboard/fragments/benchmark-launch",
+        data={
+            "plan_id": "plan-42",
+            "simulation_id": "sim-42",
+            "benchmark_profile": "nasa-esa-mission-review-permissive",
+            "request_id": "req-operator-benchmark",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Benchmark launch completed" in response.text
+    assert "req-operator-benchmark" in response.text
+    assert "nasa-esa-mission-review-permissive" in response.text
+    assert "data-fragment=\"operator-launch-result\"" in response.text
+    assert captured == {
+        "plan_id": "plan-42",
+        "simulation_id": "sim-42",
+        "benchmark_profile": "nasa-esa-mission-review-permissive",
+        "request_id": "req-operator-benchmark",
+        "auth_token": None,
+    }
+
+
+def test_release_launch_fragment_dispatches_release_bundle_request(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _patch_release_launch(monkeypatch)
+
+    response = client.post(
+        "/dashboard/fragments/release-launch",
+        data={
+            "plan_id": "plan-7",
+            "simulation_id": "sim-7",
+            "release_type": "hotfix",
+            "version": "2026.HF-03",
+            "changed_doc_ids": "doc-7, doc-8",
+            "summary": "Operator validation release.",
+            "benchmark_profile": "nasa-esa-mission-review",
+            "min_confidence": "0.91",
+            "output_dir": "artifacts/releases",
+            "request_id": "req-operator-release",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Release launch completed" in response.text
+    assert "2026.HF-03" in response.text
+    assert "artifacts/releases" in response.text
+    assert "req-operator-release" in response.text
+    assert captured == {
+        "plan_id": "plan-7",
+        "simulation_id": "sim-7",
+        "release_type": "hotfix",
+        "version": "2026.HF-03",
+        "changed_doc_ids": ["doc-7", "doc-8"],
+        "summary": "Operator validation release.",
+        "benchmark_profile": "nasa-esa-mission-review",
+        "min_confidence": 0.91,
+        "output_dir": "artifacts/releases",
+        "request_id": "req-operator-release",
+        "auth_token": None,
+    }
+
+
+def test_release_launch_fragment_returns_friendly_validation_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_release_launch(monkeypatch)
+
+    response = client.post(
+        "/dashboard/fragments/release-launch",
+        data={
+            "plan_id": "plan-7",
+            "simulation_id": "sim-7",
+            "release_type": "hotfix",
+            "version": "",
+            "changed_doc_ids": "doc-7",
+            "summary": "Operator validation release.",
+            "benchmark_profile": "nasa-esa-mission-review",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Release launch failed" in response.text
+    assert "Version is required" in response.text
 
 
 def test_correlation_fragment_renders_integrity_warning_for_partial_chain(

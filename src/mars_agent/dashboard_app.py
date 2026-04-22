@@ -9,14 +9,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Final, cast
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from mcp.server.fastmcp.exceptions import ToolError
 
 from mars_agent.governance import list_policy_profiles
 from mars_agent.mcp.server import (
     _TELEMETRY,
+    mars_benchmark,
+    mars_release,
     mcp,
     telemetry_correlation_chain,
     telemetry_dashboard_snapshot,
@@ -482,6 +485,59 @@ def _build_benchmark_profiles_panel() -> dict[str, object]:
     }
 
 
+def _normalize_optional_text(value: str) -> str | None:
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _split_changed_doc_ids(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _decode_tool_error(exc: ToolError) -> tuple[str | None, str]:
+    raw = str(exc)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, raw
+    if not isinstance(payload, Mapping):
+        return None, raw
+    error_code = payload.get("code")
+    message = payload.get("message")
+    resolved_code = str(error_code) if error_code is not None else None
+    resolved_message = str(message) if message is not None else raw
+    return resolved_code, resolved_message
+
+
+def _render_operator_action_result(
+    request: Request,
+    *,
+    title: str,
+    tool_name: str,
+    ok: bool,
+    summary: str,
+    details: list[dict[str, str]],
+    payload: Mapping[str, object],
+    status_code: int = 200,
+) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request=request,
+        name="fragments/operator_launch_result.html",
+        status_code=status_code,
+        context={
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "result": {
+                "title": title,
+                "tool_name": tool_name,
+                "ok": ok,
+                "summary": summary,
+                "details": details,
+                "json_body": json.dumps(payload, indent=2, sort_keys=True, default=str),
+            },
+        },
+    )
+
+
 def _resolve_soak_report_path() -> Path | None:
     configured = os.getenv(_SOAK_REPORT_PATH_ENV)
     if configured:
@@ -929,6 +985,217 @@ def benchmark_profiles_fragment(request: Request) -> HTMLResponse:
             "ui_schema_version": UI_SCHEMA_VERSION,
             "catalog": profiles,
         },
+    )
+
+
+@app.post("/dashboard/fragments/benchmark-launch", response_class=HTMLResponse)
+async def benchmark_launch_fragment(
+    request: Request,
+    plan_id: str = Form(...),
+    simulation_id: str = Form(...),
+    benchmark_profile: str = Form(""),
+    request_id: str = Form(""),
+) -> HTMLResponse:
+    selected_profile = _normalize_optional_text(benchmark_profile)
+    resolved_request_id = _normalize_optional_text(request_id)
+    try:
+        response = await mars_benchmark(
+            plan_id=plan_id,
+            simulation_id=simulation_id,
+            benchmark_profile=selected_profile,
+            request_id=resolved_request_id,
+        )
+    except ToolError as exc:
+        error_code, error_message = _decode_tool_error(exc)
+        return _render_operator_action_result(
+            request,
+            title="Benchmark launch failed",
+            tool_name="mars.benchmark",
+            ok=False,
+            summary=error_message,
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Benchmark Profile", "value": selected_profile or "default"},
+                {"label": "Error Code", "value": error_code or "tool_error"},
+            ],
+            payload={
+                "plan_id": plan_id,
+                "simulation_id": simulation_id,
+                "benchmark_profile": selected_profile,
+                "error_code": error_code,
+                "message": error_message,
+            },
+            status_code=400,
+        )
+
+    resolved_response = dict(response)
+    resolved_request = response.get("request_id")
+    details = [
+        {"label": "Plan ID", "value": plan_id},
+        {"label": "Simulation ID", "value": simulation_id},
+        {"label": "Benchmark Profile", "value": selected_profile or "default"},
+    ]
+    if isinstance(resolved_request, str) and resolved_request:
+        details.append({"label": "Request ID", "value": resolved_request})
+    return _render_operator_action_result(
+        request,
+        title="Benchmark launch completed",
+        tool_name="mars.benchmark",
+        ok=True,
+        summary="Runtime benchmark evaluation finished with the selected policy profile.",
+        details=details,
+        payload=resolved_response,
+    )
+
+
+@app.post("/dashboard/fragments/release-launch", response_class=HTMLResponse)
+async def release_launch_fragment(
+    request: Request,
+    plan_id: str = Form(...),
+    simulation_id: str = Form(...),
+    release_type: str = Form("hotfix"),
+    version: str = Form(""),
+    changed_doc_ids: str = Form(""),
+    summary: str = Form(""),
+    benchmark_profile: str = Form(""),
+    min_confidence: float = Form(0.85),
+    output_dir: str = Form(""),
+    request_id: str = Form(""),
+) -> HTMLResponse:
+    normalized_release_type = release_type.strip()
+    if normalized_release_type not in {"hotfix", "quarterly"}:
+        return _render_operator_action_result(
+            request,
+            title="Release launch failed",
+            tool_name="mars.release",
+            ok=False,
+            summary="Release type must be either 'hotfix' or 'quarterly'.",
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Release Type", "value": normalized_release_type or "missing"},
+            ],
+            payload={"release_type": normalized_release_type},
+            status_code=400,
+        )
+
+    normalized_version = version.strip()
+    normalized_summary = summary.strip()
+    parsed_doc_ids = _split_changed_doc_ids(changed_doc_ids)
+    selected_profile = _normalize_optional_text(benchmark_profile)
+    resolved_output_dir = _normalize_optional_text(output_dir)
+    resolved_request_id = _normalize_optional_text(request_id)
+
+    if not normalized_version:
+        return _render_operator_action_result(
+            request,
+            title="Release launch failed",
+            tool_name="mars.release",
+            ok=False,
+            summary="Version is required to create a release bundle.",
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Release Type", "value": normalized_release_type},
+            ],
+            payload={"version": normalized_version},
+            status_code=400,
+        )
+
+    if not normalized_summary:
+        return _render_operator_action_result(
+            request,
+            title="Release launch failed",
+            tool_name="mars.release",
+            ok=False,
+            summary="Summary is required to create a release bundle.",
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Version", "value": normalized_version},
+            ],
+            payload={"summary": normalized_summary},
+            status_code=400,
+        )
+
+    if not parsed_doc_ids:
+        return _render_operator_action_result(
+            request,
+            title="Release launch failed",
+            tool_name="mars.release",
+            ok=False,
+            summary="At least one changed document ID is required.",
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Version", "value": normalized_version},
+            ],
+            payload={"changed_doc_ids": parsed_doc_ids},
+            status_code=400,
+        )
+
+    try:
+        response = await mars_release(
+            plan_id=plan_id,
+            simulation_id=simulation_id,
+            release_type=normalized_release_type,
+            version=normalized_version,
+            changed_doc_ids=parsed_doc_ids,
+            summary=normalized_summary,
+            benchmark_profile=selected_profile,
+            min_confidence=min_confidence,
+            output_dir=resolved_output_dir,
+            request_id=resolved_request_id,
+        )
+    except ToolError as exc:
+        error_code, error_message = _decode_tool_error(exc)
+        return _render_operator_action_result(
+            request,
+            title="Release launch failed",
+            tool_name="mars.release",
+            ok=False,
+            summary=error_message,
+            details=[
+                {"label": "Plan ID", "value": plan_id},
+                {"label": "Simulation ID", "value": simulation_id},
+                {"label": "Version", "value": normalized_version},
+                {"label": "Release Type", "value": normalized_release_type},
+                {"label": "Error Code", "value": error_code or "tool_error"},
+            ],
+            payload={
+                "plan_id": plan_id,
+                "simulation_id": simulation_id,
+                "release_type": normalized_release_type,
+                "version": normalized_version,
+                "benchmark_profile": selected_profile,
+                "error_code": error_code,
+                "message": error_message,
+            },
+            status_code=400,
+        )
+
+    resolved_response = dict(response)
+    resolved_request = response.get("request_id")
+    details = [
+        {"label": "Plan ID", "value": plan_id},
+        {"label": "Simulation ID", "value": simulation_id},
+        {"label": "Version", "value": normalized_version},
+        {"label": "Release Type", "value": normalized_release_type},
+        {"label": "Benchmark Profile", "value": selected_profile or "default"},
+    ]
+    if resolved_output_dir is not None:
+        details.append({"label": "Output Directory", "value": resolved_output_dir})
+    if isinstance(resolved_request, str) and resolved_request:
+        details.append({"label": "Request ID", "value": resolved_request})
+    return _render_operator_action_result(
+        request,
+        title="Release launch completed",
+        tool_name="mars.release",
+        ok=True,
+        summary="Governance release workflow completed and returned a release bundle payload.",
+        details=details,
+        payload=resolved_response,
     )
 
 
