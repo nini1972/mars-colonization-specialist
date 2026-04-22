@@ -10,12 +10,14 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
 )
 
 
 class _HasCapabilitiesAndAnalyze(Protocol):
     def capabilities(self) -> SpecialistCapability: ...
     def analyze(self, request: ModuleRequest) -> ModuleResponse: ...
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]: ...
 
 
 @dataclass

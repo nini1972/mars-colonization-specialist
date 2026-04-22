@@ -129,4 +129,22 @@ Latest Alignment Update (Phase 11 Step 1)
 - This does not yet make the specialists peer-to-peer participants. The planner still hosts the session and the negotiator still produces the tradeoff decision. The change is intentionally internal so `mars.plan` responses, telemetry contracts, idempotency semantics, and MCP payload shapes remain unchanged.
 - Phase 11 Step 2 should move specialist tradeoff proposals onto this session model, with deterministic scheduling preserved across sync and async planner paths.
 
+Latest Alignment Update (Phase 11 Step 2)
+
+- Specialist-authored proposals are now active inside the deterministic session layer.
+- Each specialist can emit deterministic `TradeoffProposal` objects for relevant conflict IDs:
+	- ECLSS -> `crew_reduction`
+	- ISRU -> `isru_reduction_fraction`
+	- Power -> `dust_degradation_adjustment`
+	- HabitatThermodynamics -> `thermal_power_budget_reduction`
+- `CentralPlanner` now gathers proposals from impacted specialists, records them as `proposal_submitted` transcript entries, and passes the proposal set into both:
+	- `MultiAgentNegotiator._build_messages()` for LLM-assisted negotiation
+	- `_conflict_aware_fallback()` for deterministic non-LLM resolution
+- This is the first point where tradeoff proposals are authored by specialists rather than synthesized entirely by planner-owned static logic.
+- The system is still not fully peer-to-peer yet:
+	- the planner still hosts the session
+	- specialists do not yet consume one another's messages directly
+	- the final executable decision still collapses into the existing plan/replan contract
+- Phase 11 Step 3 should expose transcript/proposal observability and then introduce bounded specialist-to-specialist message handling on top of the current deterministic scheduler.
+
 Claude Sonnet 4.6 • 1x

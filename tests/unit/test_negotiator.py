@@ -17,7 +17,7 @@ from mars_agent.orchestration.models import (
     RetrievedEvidence,
 )
 from mars_agent.orchestration.negotiator import MultiAgentNegotiator, NegotiationRound
-from mars_agent.specialists.contracts import Subsystem
+from mars_agent.specialists.contracts import Subsystem, TradeoffProposal
 
 
 def _goal() -> MissionGoal:
@@ -179,6 +179,37 @@ def test_negotiate_empty_history_omits_prior_rounds_section() -> None:
     call_kwargs = mock_client.chat.completions.create.call_args
     user_message = call_kwargs.kwargs["messages"][1]["content"]
     assert "Prior negotiation rounds" not in user_message
+
+
+def test_negotiate_includes_specialist_proposals_in_user_message() -> None:
+    payload = {"accepted": True, "isru_reduction_fraction": 0.4, "rationale": "OK."}
+    negotiator, mock_client = _negotiator_with_mock_client(payload)
+
+    negotiator.negotiate(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+        proposals=(
+            TradeoffProposal(
+                subsystem=Subsystem.ISRU,
+                knob_name="isru_reduction_fraction",
+                suggested_delta=0.05,
+                rationale="Trim ISRU load first.",
+            ),
+            TradeoffProposal(
+                subsystem=Subsystem.POWER,
+                knob_name="dust_degradation_adjustment",
+                suggested_delta=0.02,
+                rationale="Recover solar headroom.",
+            ),
+        ),
+    )
+
+    call_kwargs = mock_client.chat.completions.create.call_args
+    user_message = call_kwargs.kwargs["messages"][1]["content"]
+    assert "Specialist-authored tradeoff proposals" in user_message
+    assert "ISRU" in user_message
+    assert "dust_degradation_adjustment" in user_message
 
 
 def test_negotiate_crew_reduction_propagated() -> None:

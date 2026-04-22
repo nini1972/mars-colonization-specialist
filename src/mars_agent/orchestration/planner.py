@@ -48,6 +48,7 @@ from mars_agent.specialists import (
     Subsystem,
     UncertaintyBounds,
 )
+from mars_agent.specialists.contracts import TradeoffProposal
 
 
 class _HasAnalyze(Protocol):
@@ -510,6 +511,7 @@ class CentralPlanner:
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         knowledge_context: KnowledgeContext | None = None,
+        proposals: tuple[TradeoffProposal, ...] = (),
     ) -> tuple[float, int, float, str]:
         """Return (new_isru_reduction, crew_delta, dust_delta, rationale) for active conflicts.
 
@@ -528,15 +530,40 @@ class CentralPlanner:
                 if knob.name == "isru_reduction_fraction":
                     cap_isru_delta = max(cap_isru_delta, knob.preferred_delta)
 
+        proposal_isru = max(
+            (
+                proposal.suggested_delta
+                for proposal in proposals
+                if proposal.knob_name == "isru_reduction_fraction"
+            ),
+            default=0.0,
+        )
+        proposal_crew = max(
+            (
+                int(round(proposal.suggested_delta))
+                for proposal in proposals
+                if proposal.knob_name == "crew_reduction"
+            ),
+            default=0,
+        )
+        proposal_dust = max(
+            (
+                proposal.suggested_delta
+                for proposal in proposals
+                if proposal.knob_name == "dust_degradation_adjustment"
+            ),
+            default=0.0,
+        )
+        isru_delta = proposal_isru
+        crew_delta = proposal_crew
+        dust_delta = proposal_dust
+
         # Override/supplement with the static conflict-ID table (and any per-deployment
         # overrides from PlannerSettings) so that conflict-specific logic is preserved.
         table: dict[str, tuple[float, int, float]] = {
             **_CONFLICT_KNOB_TABLE,
             **self.settings.conflict_knob_overrides,
         }
-        isru_delta = 0.0
-        crew_delta = 0
-        dust_delta = 0.0
         trust_weight = knowledge_context.trust_weight if knowledge_context is not None else 1.0
         named: list[str] = []
         for conflict in conflicts:
@@ -564,9 +591,39 @@ class CentralPlanner:
         rationale = (
             f"Conflict-aware fallback for [{conflict_list}]: "
             f"ISRU +{isru_delta:.2f}, crew -{crew_delta}, dust -{dust_delta:.2f} "
-            f"(knowledge_weight={trust_weight:.2f})."
+            f"(knowledge_weight={trust_weight:.2f}, specialist_proposals={len(proposals)})."
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
+
+    def _collect_specialist_proposals(
+        self,
+        conflicts: tuple[CrossDomainConflict, ...],
+    ) -> tuple[TradeoffProposal, ...]:
+        conflict_ids = tuple(sorted({conflict.conflict_id for conflict in conflicts}))
+        impacted = tuple(
+            sorted(
+                {
+                    subsystem
+                    for conflict in conflicts
+                    for subsystem in conflict.impacted_subsystems
+                },
+                key=lambda subsystem: subsystem.value,
+            )
+        )
+        proposals: list[TradeoffProposal] = []
+        for subsystem in impacted:
+            proposals.extend(self.registry.get(subsystem).propose_tradeoffs(conflict_ids))
+        return tuple(
+            sorted(
+                proposals,
+                key=lambda proposal: (
+                    proposal.subsystem.value,
+                    proposal.knob_name,
+                    proposal.suggested_delta,
+                    proposal.rationale,
+                ),
+            )
+        )
 
     @staticmethod
     def _negotiation_recipients(
@@ -704,6 +761,19 @@ class CentralPlanner:
             history,
         )
         recipients = self._negotiation_recipients(conflicts)
+        proposals = self._collect_specialist_proposals(conflicts)
+        for proposal in proposals:
+            session.transcript.record(
+                sender=proposal.subsystem.value,
+                recipients=("planner",),
+                kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+                payload={
+                    "knob_name": proposal.knob_name,
+                    "suggested_delta": proposal.suggested_delta,
+                    "rationale": proposal.rationale,
+                    "conflict_ids": list(proposal.conflict_ids),
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
@@ -743,6 +813,7 @@ class CentralPlanner:
             history=history,
             capabilities=self.registry.all_capabilities(),
             knowledge_context=knowledge_context,
+            proposals=proposals,
         )
         is_fallback = False
         source = "llm"
@@ -751,6 +822,7 @@ class CentralPlanner:
                 conflicts,
                 current_reduction,
                 knowledge_context,
+                proposals,
             )
             is_fallback = True
             source = "fallback"
@@ -795,6 +867,19 @@ class CentralPlanner:
             history,
         )
         recipients = self._negotiation_recipients(conflicts)
+        proposals = self._collect_specialist_proposals(conflicts)
+        for proposal in proposals:
+            session.transcript.record(
+                sender=proposal.subsystem.value,
+                recipients=("planner",),
+                kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+                payload={
+                    "knob_name": proposal.knob_name,
+                    "suggested_delta": proposal.suggested_delta,
+                    "rationale": proposal.rationale,
+                    "conflict_ids": list(proposal.conflict_ids),
+                },
+            )
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
@@ -840,6 +925,7 @@ class CentralPlanner:
                     history=history,
                     capabilities=self.registry.all_capabilities(),
                     knowledge_context=knowledge_context,
+                    proposals=proposals,
                 )
             )
             if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
@@ -852,6 +938,7 @@ class CentralPlanner:
                         history,
                         self.registry.all_capabilities(),
                         knowledge_context,
+                        proposals,
                     )
                 )
         else:
@@ -864,6 +951,7 @@ class CentralPlanner:
                     history,
                     self.registry.all_capabilities(),
                     knowledge_context,
+                    proposals,
                 )
             )
 
@@ -874,6 +962,7 @@ class CentralPlanner:
                 conflicts,
                 current_reduction,
                 knowledge_context,
+                proposals,
             )
             is_fallback = True
             source = "fallback"

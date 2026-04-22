@@ -21,6 +21,7 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
     TradeoffKnob,
     UncertaintyBounds,
 )
@@ -70,6 +71,23 @@ class ECLSSSpecialist:
                     preferred_delta=0.02,
                     unit="ratio",
                 ),
+            ),
+        )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        relevant = tuple(sorted(cid for cid in conflict_ids if cid.startswith("coupling.power")))
+        if not relevant:
+            return ()
+        return (
+            TradeoffProposal(
+                subsystem=Subsystem.ECLSS,
+                knob_name="crew_reduction",
+                suggested_delta=1.0,
+                rationale=(
+                    "ECLSS recommends standing down one crew-equivalent workload to "
+                    "reduce life-support power demand during power-linked conflicts."
+                ),
+                conflict_ids=relevant,
             ),
         )
 

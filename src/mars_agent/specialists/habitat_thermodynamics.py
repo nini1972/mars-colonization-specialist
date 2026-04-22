@@ -21,6 +21,7 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
     TradeoffKnob,
     UncertaintyBounds,
 )
@@ -241,6 +242,25 @@ class HabitatThermodynamicsSpecialist:
                     preferred_delta=2.0,
                     unit="kW",
                 ),
+            ),
+        )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        relevant = tuple(
+            sorted(cid for cid in conflict_ids if cid == "coupling.power_balance.thermal_shortfall")
+        )
+        if not relevant:
+            return ()
+        return (
+            TradeoffProposal(
+                subsystem=Subsystem.HABITAT_THERMODYNAMICS,
+                knob_name="thermal_power_budget_reduction",
+                suggested_delta=2.0,
+                rationale=(
+                    "Thermal control recommends temporarily trimming the discretionary "
+                    "thermal budget by 2 kW to relieve shared power pressure."
+                ),
+                conflict_ids=relevant,
             ),
         )
 

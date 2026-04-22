@@ -21,6 +21,7 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
     TradeoffKnob,
     UncertaintyBounds,
 )
@@ -61,6 +62,29 @@ class PowerSpecialist:
                     preferred_delta=0.02,
                     unit="fraction",
                 ),
+            ),
+        )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        relevant = tuple(
+            sorted(
+                cid
+                for cid in conflict_ids
+                if cid.startswith("coupling.power") or cid == "coupling.isru_power_share.high"
+            )
+        )
+        if not relevant:
+            return ()
+        return (
+            TradeoffProposal(
+                subsystem=Subsystem.POWER,
+                knob_name="dust_degradation_adjustment",
+                suggested_delta=0.02,
+                rationale=(
+                    "Power recommends a cleaning/mitigation action equivalent to a 0.02 "
+                    "dust-degradation reduction to recover generation."
+                ),
+                conflict_ids=relevant,
             ),
         )
 

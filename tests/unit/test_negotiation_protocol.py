@@ -122,10 +122,18 @@ def test_run_negotiation_session_records_fallback_transcript() -> None:
         NegotiationMessageKind.SESSION_STARTED,
         NegotiationMessageKind.CONFLICT_DETECTED,
         NegotiationMessageKind.PROPOSAL_REQUESTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
         NegotiationMessageKind.FALLBACK_APPLIED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
     ]
+    proposal_senders = [
+        message.sender
+        for message in session.transcript.messages
+        if message.kind is NegotiationMessageKind.PROPOSAL_SUBMITTED
+    ]
+    assert proposal_senders == ["isru", "power"]
 
 
 def test_run_negotiation_session_records_memory_replay_transcript() -> None:
@@ -163,7 +171,20 @@ def test_run_negotiation_session_records_memory_replay_transcript() -> None:
         NegotiationMessageKind.SESSION_STARTED,
         NegotiationMessageKind.CONFLICT_DETECTED,
         NegotiationMessageKind.PROPOSAL_REQUESTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
         NegotiationMessageKind.MEMORY_REPLAYED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
+    ]
+
+
+def test_collect_specialist_proposals_returns_deterministic_sorted_proposals() -> None:
+    planner = CentralPlanner()
+
+    proposals = planner._collect_specialist_proposals((_conflict(),))
+
+    assert [(proposal.subsystem.value, proposal.knob_name) for proposal in proposals] == [
+        ("isru", "isru_reduction_fraction"),
+        ("power", "dust_degradation_adjustment"),
     ]

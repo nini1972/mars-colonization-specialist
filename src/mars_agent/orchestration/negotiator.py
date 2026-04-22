@@ -17,6 +17,7 @@ from mars_agent.orchestration.models import (
     MissionGoal,
 )
 from mars_agent.specialists.contracts import SpecialistCapability
+from mars_agent.specialists.contracts import TradeoffProposal
 
 type ChatCompletionMessageParamT = dict[str, str]
 
@@ -378,6 +379,24 @@ class MultiAgentNegotiator:
             )
         return "\n".join(lines)
 
+    def _proposal_section(self, proposals: tuple[TradeoffProposal, ...]) -> str:
+        supported_knobs = {
+            "isru_reduction_fraction",
+            "crew_reduction",
+            "dust_degradation_adjustment",
+        }
+        relevant = [proposal for proposal in proposals if proposal.knob_name in supported_knobs]
+        if not relevant:
+            return ""
+
+        lines = ["\n\nSpecialist-authored tradeoff proposals:"]
+        for proposal in relevant:
+            lines.append(
+                f"  [{proposal.subsystem.name}] {proposal.knob_name} "
+                f"delta={proposal.suggested_delta:.3f} -> {proposal.rationale}"
+            )
+        return "\n".join(lines)
+
     def _build_messages(
         self,
         goal: MissionGoal,
@@ -386,6 +405,7 @@ class MultiAgentNegotiator:
         history: tuple[NegotiationRound, ...],
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
+        proposals: tuple[TradeoffProposal, ...] = (),
     ) -> list[ChatCompletionMessageParamT]:
         """Construct the system + user messages for the LLM call."""
         conflict_descriptions = [
@@ -415,6 +435,7 @@ class MultiAgentNegotiator:
         system_prompt = self._append_capability_preferences(system_prompt, capabilities)
         system_prompt = self._append_knowledge_context(system_prompt, knowledge_context)
         history_section = self._history_section(history)
+        proposal_section = self._proposal_section(proposals)
 
         user_prompt = (
             f"Mission Goal: {goal.crew_size} crew, Phase: {goal.current_phase.name}.\n"
@@ -422,6 +443,7 @@ class MultiAgentNegotiator:
             "The CouplingChecker returned these conflicts:\n"
             + "\n".join(conflict_descriptions)
             + history_section
+            + proposal_section
             + "\n\nPlease propose a new ISRU feedstock reduction fraction to "
             "resolve the power deficit safely."
         )
@@ -439,6 +461,7 @@ class MultiAgentNegotiator:
         history: tuple[NegotiationRound, ...] = (),
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
+        proposals: tuple[TradeoffProposal, ...] = (),
     ) -> tuple[bool, float, int, float, str]:
         """
         Executes a multi-agent negotiation loop to resolve specific conflicts.
@@ -458,6 +481,7 @@ class MultiAgentNegotiator:
                         history=history,
                         capabilities=capabilities,
                         knowledge_context=knowledge_context,
+                        proposals=proposals,
                     )
                 )
                 if async_result[4] not in {
@@ -479,6 +503,7 @@ class MultiAgentNegotiator:
                 history,
                 capabilities,
                 knowledge_context,
+                proposals,
             )
 
             if self._responses_enabled() and hasattr(self.client, "responses"):
@@ -504,6 +529,7 @@ class MultiAgentNegotiator:
         history: tuple[NegotiationRound, ...] = (),
         capabilities: tuple[SpecialistCapability, ...] = (),
         knowledge_context: KnowledgeContext | None = None,
+        proposals: tuple[TradeoffProposal, ...] = (),
     ) -> tuple[bool, float, int, float, str]:
         """Async variant of negotiate() used when async mode is enabled."""
         if not self.is_enabled or self.async_client is None:
@@ -523,6 +549,7 @@ class MultiAgentNegotiator:
                 history,
                 capabilities,
                 knowledge_context,
+                proposals,
             )
 
             if self._responses_enabled() and hasattr(self.async_client, "responses"):

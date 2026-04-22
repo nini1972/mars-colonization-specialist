@@ -21,6 +21,7 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
     TradeoffKnob,
     UncertaintyBounds,
 )
@@ -67,6 +68,29 @@ class ISRUSpecialist:
                     preferred_delta=0.02,
                     unit="ratio",
                 ),
+            ),
+        )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        relevant = tuple(
+            sorted(
+                cid
+                for cid in conflict_ids
+                if cid.startswith("coupling.power") or cid == "coupling.isru_power_share.high"
+            )
+        )
+        if not relevant:
+            return ()
+        return (
+            TradeoffProposal(
+                subsystem=Subsystem.ISRU,
+                knob_name="isru_reduction_fraction",
+                suggested_delta=0.05,
+                rationale=(
+                    "ISRU recommends a 5% feedstock reduction to restore electrical "
+                    "headroom with minimal oxygen production impact."
+                ),
+                conflict_ids=relevant,
             ),
         )
 

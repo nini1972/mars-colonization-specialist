@@ -42,6 +42,24 @@ class SpecialistCapability:
     tradeoff_knobs: tuple[TradeoffKnob, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class TradeoffProposal:
+    """A deterministic specialist-authored proposal for one tradeoff knob."""
+
+    subsystem: Subsystem
+    knob_name: str
+    suggested_delta: float
+    rationale: str
+    conflict_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.suggested_delta < 0.0:
+            raise ValueError(
+                f"TradeoffProposal '{self.knob_name}': suggested_delta must be non-negative "
+                f"(got {self.suggested_delta})"
+            )
+
+
 class Subsystem(StrEnum):
     """Supported subsystem identifiers for specialist modules."""
 
