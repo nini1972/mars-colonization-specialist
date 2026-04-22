@@ -1,0 +1,48 @@
+<div class="fragment" data-fragment="benchmark-profiles" data-fragment-required="catalog,ui_schema_version" data-fragment-allowed="catalog,ui_schema_version">
+  <header class="card-head">
+    <h2>Benchmark Profile Catalog</h2>
+    <span class="pill">{{ catalog["profile_count"] }} profile(s)</span>
+  </header>
+
+  <div class="stats">
+    <div class="stat">
+      <label>Default Profile</label>
+      <strong>{{ catalog["default_profile"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Profiles</label>
+      <strong>{{ catalog["profile_count"] }}</strong>
+    </div>
+    <div class="stat">
+      <label>Total References</label>
+      <strong>{{ catalog["total_references"] }}</strong>
+    </div>
+  </div>
+
+  {% if not catalog["profiles"] %}
+  <p class="muted">No benchmark profiles configured yet.</p>
+  {% else %}
+  <div class="profile-catalog">
+    {% for profile in catalog["profiles"] %}
+    <section class="profile-card {% if profile['is_default'] %}profile-card-default{% endif %}">
+      <div class="card-head">
+        <h3>{{ profile["name"] }}</h3>
+        <div class="profile-pills">
+          {% if profile["is_default"] %}
+          <span class="pill">default</span>
+          {% endif %}
+          <span class="pill">{{ profile["policy_version"] }}</span>
+        </div>
+      </div>
+      <p class="muted">{{ profile["policy_source"] }}</p>
+      <p class="muted">{{ profile["reference_count"] }} reference(s)</p>
+      <div class="metric-chip-list">
+        {% for metric in profile["metrics"] %}
+        <span class="metric-chip">{{ metric }}</span>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>

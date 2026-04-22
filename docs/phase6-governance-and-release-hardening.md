@@ -13,6 +13,7 @@
 - Hardened release manifest metadata including `governance_policy_version`, `benchmark_profile`, `benchmark_policy_version`, `rationale_type`, and `artifact_provenance`.
 - Config-backed benchmark policy profiles in `configs/knowledge_release_policy.toml`, with `BenchmarkHarness.from_policy_profile()` and MCP-level `benchmark_profile` selection on both `mars.benchmark` and `mars.release`.
 - Operator-facing `mars.benchmark.profiles` discovery tool that lists the configured default profile plus every available benchmark profile, version, source, and covered metric set.
+- Visual Mission Ops dashboard panel for the same profile catalog, exposed as `/dashboard/fragments/benchmark-profiles` and rendered as an operator-readable profile grid.
 
 ## Governance guarantees
 
@@ -26,6 +27,7 @@
 - The default benchmark policy is now explicit and reviewable as `nasa-esa-mission-review@2026.03`, and that identity is persisted into benchmark reports, bulletins, manifests, and `mars.release` responses.
 - Operators can now select a configured benchmark lane explicitly, rather than only accepting the default policy, by passing `benchmark_profile` to `mars.benchmark` or `mars.release`.
 - Operators can discover those profile names directly through `mars.benchmark.profiles`, instead of relying on documentation or out-of-band knowledge.
+- The dashboard now mirrors that discovery path visually, so operators can inspect default vs non-default benchmark lanes without leaving the Mission Ops UI.
 - Release bulletins are generated as reproducible markdown summaries.
 - When `GovernanceWorkflow.finalize_quarterly()` or `finalize_hotfix()` receives an `audit_path`, it exports the audit JSON before release hardening checks raise, so blocked releases still leave behind review evidence.
 - `GovernanceWorkflow.export_release_bundle()` writes release artifacts using filenames derived from `{version}-{release_type}`, preserving deterministic artifact naming for operator review and CI archiving.

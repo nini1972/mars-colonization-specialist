@@ -73,6 +73,12 @@ th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #e8efe2; fo
 .status-pass { background: #2f7f5f; }
 .status-fail { background: #b65a2a; }
 .status-warn { background: #b68a00; }
+.profile-catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.8rem; margin-top: 0.8rem; }
+.profile-card { border: 1px solid #dfe8d8; border-radius: 12px; padding: 0.85rem; background: linear-gradient(180deg, #fbfdf8 0%, #f4f8ef 100%); }
+.profile-card-default { border-color: #94b48f; box-shadow: inset 0 0 0 1px #d4e5d0; }
+.profile-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.metric-chip-list { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.7rem; }
+.metric-chip { background: #edf4e8; border: 1px solid #d2dfca; border-radius: 999px; padding: 0.2rem 0.55rem; font-size: 0.8rem; color: #365136; }
 .modal-backdrop {
   position: fixed;
   inset: 0;

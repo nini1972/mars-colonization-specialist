@@ -191,6 +191,31 @@ def _patch_negotiations(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _patch_benchmark_profiles(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "list_policy_profiles",
+        lambda: (
+            {
+                "name": "nasa-esa-mission-review",
+                "policy_version": "2026.03",
+                "policy_source": "NASA/ESA mission review benchmark bundle",
+                "is_default": True,
+                "metrics": ["load_margin_kw", "resource_surplus_ratio"],
+                "reference_count": 2,
+            },
+            {
+                "name": "nasa-esa-mission-review-permissive",
+                "policy_version": "2026.03-dev",
+                "policy_source": "Synthetic permissive mission review benchmark bundle",
+                "is_default": False,
+                "metrics": ["load_margin_kw", "resource_surplus_ratio", "storage_cover_hours"],
+                "reference_count": 3,
+            },
+        ),
+    )
+
+
 def test_dashboard_main_page_exposes_ui_schema_version(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -198,6 +223,7 @@ def test_dashboard_main_page_exposes_ui_schema_version(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -213,6 +239,7 @@ def test_dashboard_json_endpoint_keeps_json_contract(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/api/telemetry/dashboard")
 
@@ -282,6 +309,7 @@ def test_dashboard_page_includes_loading_skeleton_markers(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -289,6 +317,7 @@ def test_dashboard_page_includes_loading_skeleton_markers(
     assert "Loading correlation chain" in response.text
     assert "Loading invocation details" in response.text
     assert "Refreshing replay indicators" in response.text
+    assert "Loading benchmark profile catalog" in response.text
 
 
 def test_main_page_shows_degraded_banner_when_backend_is_degraded(
@@ -298,6 +327,7 @@ def test_main_page_shows_degraded_banner_when_backend_is_degraded(
     _patch_dashboard_snapshot(monkeypatch, degraded=True)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -312,6 +342,7 @@ def test_fragment_integrity_markers_exist_for_all_fragment_routes(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_invocations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
     monkeypatch.setattr(
         dashboard_app,
         "telemetry_correlation_chain",
@@ -333,13 +364,21 @@ def test_fragment_integrity_markers_exist_for_all_fragment_routes(
     invocations = client.get("/dashboard/fragments/invocations?page=1&page_size=20")
     correlation = client.get("/dashboard/fragments/correlation?correlation_id=corr-1")
     replay = client.get("/dashboard/fragments/replay")
+    benchmark_profiles = client.get("/dashboard/fragments/benchmark-profiles")
 
     assert overview.status_code == 200
     assert invocations.status_code == 200
     assert correlation.status_code == 200
     assert replay.status_code == 200
+    assert benchmark_profiles.status_code == 200
 
-    for payload in (overview.text, invocations.text, correlation.text, replay.text):
+    for payload in (
+        overview.text,
+        invocations.text,
+        correlation.text,
+        replay.text,
+        benchmark_profiles.text,
+    ):
         assert "data-fragment" in payload
         assert "data-fragment-required" in payload
         assert "data-fragment-allowed" in payload
@@ -365,6 +404,7 @@ def test_dashboard_has_modal_loading_skeleton_and_close_control(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -511,12 +551,29 @@ def test_dashboard_page_includes_negotiation_panel_loading_marker(
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
     _patch_negotiations(monkeypatch)
+    _patch_benchmark_profiles(monkeypatch)
 
     response = client.get("/dashboard")
 
     assert response.status_code == 200
     assert "Loading negotiation sessions" in response.text
     assert "id=\"negotiations-panel\"" in response.text
+
+
+def test_benchmark_profiles_fragment_renders_visual_catalog(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_benchmark_profiles(monkeypatch)
+
+    response = client.get("/dashboard/fragments/benchmark-profiles")
+
+    assert response.status_code == 200
+    assert "Benchmark Profile Catalog" in response.text
+    assert "nasa-esa-mission-review" in response.text
+    assert "nasa-esa-mission-review-permissive" in response.text
+    assert "load_margin_kw" in response.text
+    assert "default" in response.text
 
 
 def test_correlation_fragment_renders_integrity_warning_for_partial_chain(

@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from mars_agent.governance import list_policy_profiles
 from mars_agent.mcp.server import (
     _TELEMETRY,
     mcp,
@@ -460,6 +461,27 @@ def _build_agents_panel() -> list[dict[str, object]]:
     return rows
 
 
+def _build_benchmark_profiles_panel() -> dict[str, object]:
+    """Build operator-facing benchmark policy catalog view model."""
+
+    raw_profiles = list_policy_profiles()
+    profiles = [dict(profile) for profile in raw_profiles]
+    total_references = 0
+    for profile in profiles:
+        reference_count = profile.get("reference_count", 0)
+        if isinstance(reference_count, int):
+            total_references += reference_count
+    default_profile = next(
+        str(profile["name"]) for profile in profiles if profile.get("is_default") is True
+    )
+    return {
+        "default_profile": default_profile,
+        "profiles": profiles,
+        "profile_count": len(profiles),
+        "total_references": total_references,
+    }
+
+
 def _resolve_soak_report_path() -> Path | None:
     configured = os.getenv(_SOAK_REPORT_PATH_ENV)
     if configured:
@@ -893,6 +915,19 @@ def agents_fragment(request: Request) -> HTMLResponse:
         context={
             "ui_schema_version": UI_SCHEMA_VERSION,
             "agents": rows,
+        },
+    )
+
+
+@app.get("/dashboard/fragments/benchmark-profiles", response_class=HTMLResponse)
+def benchmark_profiles_fragment(request: Request) -> HTMLResponse:
+    profiles = _build_benchmark_profiles_panel()
+    return templates.TemplateResponse(
+        request=request,
+        name="fragments/benchmark_profiles.html",
+        context={
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "catalog": profiles,
         },
     )
 
