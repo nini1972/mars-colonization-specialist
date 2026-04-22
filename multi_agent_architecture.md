@@ -110,4 +110,23 @@ Latest Alignment Update (Phase 10c Step 3)
 
 Operational intent: keep sync vs async planner performance and reliability comparable over time, and support staged rollout decisions for `MARS_MCP_PLANNER_ASYNC=true` with artifact-backed trend evidence.
 
+Latest Alignment Update (Phase 11 Step 1)
+
+- Deterministic negotiation protocol groundwork is now implemented internally.
+- New in-process protocol primitives live in `src/mars_agent/orchestration/negotiation_protocol.py`:
+	- `NegotiationSession`
+	- `NegotiationTranscript`
+	- `NegotiationMessage`
+	- `NegotiationDecision`
+- `CentralPlanner` now wraps every replan attempt in a canonical transcript with stable message sequencing and sorted recipients.
+- Current message flow is:
+	- `session_started`
+	- `conflict_detected`
+	- `proposal_requested`
+	- one of `proposal_submitted` | `fallback_applied` | `memory_replayed`
+	- `proposal_accepted`
+	- `session_closed`
+- This does not yet make the specialists peer-to-peer participants. The planner still hosts the session and the negotiator still produces the tradeoff decision. The change is intentionally internal so `mars.plan` responses, telemetry contracts, idempotency semantics, and MCP payload shapes remain unchanged.
+- Phase 11 Step 2 should move specialist tradeoff proposals onto this session model, with deterministic scheduling preserved across sync and async planner paths.
+
 Claude Sonnet 4.6 • 1x

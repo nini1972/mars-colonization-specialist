@@ -26,6 +26,11 @@ from mars_agent.orchestration.models import (
     RetrievedEvidence,
     SpecialistTiming,
 )
+from mars_agent.orchestration.negotiation_protocol import (
+    NegotiationDecision,
+    NegotiationMessageKind,
+    NegotiationSession,
+)
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
     NegotiationOutcome,
@@ -563,30 +568,163 @@ class CentralPlanner:
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
 
-    def _handle_replan(
+    @staticmethod
+    def _negotiation_recipients(
+        conflicts: tuple[CrossDomainConflict, ...],
+    ) -> tuple[str, ...]:
+        participants = {
+            subsystem.value
+            for conflict in conflicts
+            for subsystem in conflict.impacted_subsystems
+        }
+        return tuple(sorted(participants))
+
+    def _open_negotiation_session(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        history: tuple[NegotiationRound, ...],
+    ) -> NegotiationSession:
+        session = NegotiationSession.create(
+            mission_id=goal.mission_id,
+            round_index=len(history),
+            conflict_ids=tuple(conflict.conflict_id for conflict in conflicts),
+            current_reduction=current_reduction,
+        )
+        recipients = self._negotiation_recipients(conflicts)
+        session.transcript.record(
+            sender="planner",
+            kind=NegotiationMessageKind.SESSION_STARTED,
+            payload={
+                "mission_id": goal.mission_id,
+                "current_phase": goal.current_phase.value,
+                "current_reduction": current_reduction,
+                "history_length": len(history),
+            },
+        )
+        session.transcript.record(
+            sender="planner",
+            recipients=recipients,
+            kind=NegotiationMessageKind.CONFLICT_DETECTED,
+            payload={
+                "conflict_ids": [conflict.conflict_id for conflict in conflicts],
+                "conflict_count": len(conflicts),
+            },
+        )
+        session.transcript.record(
+            sender="planner",
+            recipients=recipients,
+            kind=NegotiationMessageKind.PROPOSAL_REQUESTED,
+            payload={
+                "knobs": [
+                    "isru_reduction_fraction",
+                    "crew_reduction",
+                    "dust_degradation_adjustment",
+                ],
+            },
+        )
+        return session
+
+    @staticmethod
+    def _close_negotiation_session(
+        session: NegotiationSession,
+        decision: NegotiationDecision,
+        recipients: tuple[str, ...],
+    ) -> None:
+        if decision.source == "memory":
+            session.transcript.record(
+                sender="memory",
+                recipients=("planner",),
+                kind=NegotiationMessageKind.MEMORY_REPLAYED,
+                payload={
+                    "accepted": decision.accepted,
+                    "rationale": decision.rationale,
+                    "is_fallback": decision.is_fallback,
+                },
+            )
+        elif decision.is_fallback:
+            session.transcript.record(
+                sender="planner",
+                recipients=recipients,
+                kind=NegotiationMessageKind.FALLBACK_APPLIED,
+                payload={
+                    "isru_reduction_fraction": decision.isru_reduction_fraction,
+                    "crew_reduction": decision.crew_reduction,
+                    "dust_degradation_adjustment": decision.dust_degradation_adjustment,
+                    "rationale": decision.rationale,
+                },
+            )
+        else:
+            session.transcript.record(
+                sender="negotiator",
+                recipients=("planner",),
+                kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+                payload={
+                    "isru_reduction_fraction": decision.isru_reduction_fraction,
+                    "crew_reduction": decision.crew_reduction,
+                    "dust_degradation_adjustment": decision.dust_degradation_adjustment,
+                    "rationale": decision.rationale,
+                },
+            )
+
+        session.transcript.record(
+            sender="planner",
+            recipients=recipients,
+            kind=NegotiationMessageKind.PROPOSAL_ACCEPTED,
+            payload={
+                "source": decision.source,
+                "accepted": decision.accepted,
+                "is_fallback": decision.is_fallback,
+            },
+        )
+        session.transcript.record(
+            sender="planner",
+            recipients=recipients,
+            kind=NegotiationMessageKind.SESSION_CLOSED,
+            payload={
+                "source": decision.source,
+                "accepted": decision.accepted,
+                "is_fallback": decision.is_fallback,
+            },
+        )
+
+    def _run_negotiation_session(
         self,
         goal: MissionGoal,
         conflicts: tuple[CrossDomainConflict, ...],
         current_reduction: float,
         knowledge_context: KnowledgeContext,
         history: tuple[NegotiationRound, ...] = (),
-    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
-        """Negotiate or fall back; return (new_reduction, updated_goal, rationale, round)."""
+    ) -> tuple[NegotiationDecision, NegotiationSession]:
+        session = self._open_negotiation_session(
+            goal,
+            conflicts,
+            current_reduction,
+            history,
+        )
+        recipients = self._negotiation_recipients(conflicts)
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
-            new_reduction = min(0.8, max(current_reduction, cached.isru_reduction_fraction))
-            crew_reduction = cached.crew_reduction
-            dust_adj = cached.dust_degradation_adjustment
-            memory_tag = "fallback" if cached.is_fallback else "llm"
-            rationale = f"[memory hit][{memory_tag}] {cached.rationale}"
-            accepted = True
+            decision = NegotiationDecision(
+                accepted=True,
+                isru_reduction_fraction=min(
+                    0.8,
+                    max(current_reduction, cached.isru_reduction_fraction),
+                ),
+                crew_reduction=cached.crew_reduction,
+                dust_degradation_adjustment=cached.dust_degradation_adjustment,
+                rationale=f"[memory hit][{'fallback' if cached.is_fallback else 'llm'}] {cached.rationale}",
+                is_fallback=cached.is_fallback,
+                source="memory",
+            )
             self.negotiation_store.store(
                 NegotiationOutcome(
                     conflict_fingerprint=fingerprint,
                     isru_reduction_fraction=cached.isru_reduction_fraction,
-                    crew_reduction=crew_reduction,
-                    dust_degradation_adjustment=dust_adj,
+                    crew_reduction=cached.crew_reduction,
+                    dust_degradation_adjustment=cached.dust_degradation_adjustment,
                     rationale=cached.rationale,
                     accepted=cached.accepted,
                     is_fallback=cached.is_fallback,
@@ -595,9 +733,107 @@ class CentralPlanner:
                     knowledge_fingerprint=fingerprint,
                 )
             )
-        else:
+            self._close_negotiation_session(session, decision, recipients)
+            return decision, session
+
+        accepted, new_reduction, crew_reduction, dust_adj, rationale = self.negotiator.negotiate(
+            goal=goal,
+            conflicts=conflicts,
+            current_reduction=current_reduction,
+            history=history,
+            capabilities=self.registry.all_capabilities(),
+            knowledge_context=knowledge_context,
+        )
+        is_fallback = False
+        source = "llm"
+        if not accepted:
+            new_reduction, crew_reduction, dust_adj, rationale = self._conflict_aware_fallback(
+                conflicts,
+                current_reduction,
+                knowledge_context,
+            )
+            is_fallback = True
+            source = "fallback"
+        decision = NegotiationDecision(
+            accepted=accepted,
+            isru_reduction_fraction=new_reduction,
+            crew_reduction=crew_reduction,
+            dust_degradation_adjustment=dust_adj,
+            rationale=rationale,
+            is_fallback=is_fallback,
+            source=source,
+        )
+        self.negotiation_store.store(
+            NegotiationOutcome(
+                conflict_fingerprint=fingerprint,
+                isru_reduction_fraction=decision.isru_reduction_fraction,
+                crew_reduction=decision.crew_reduction,
+                dust_degradation_adjustment=decision.dust_degradation_adjustment,
+                rationale=decision.rationale,
+                accepted=True,
+                is_fallback=decision.is_fallback,
+                stored_at=now_utc_iso(),
+                hit_count=0,
+                knowledge_fingerprint=fingerprint,
+            )
+        )
+        self._close_negotiation_session(session, decision, recipients)
+        return decision, session
+
+    async def _run_negotiation_session_async(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        knowledge_context: KnowledgeContext,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[NegotiationDecision, NegotiationSession]:
+        session = self._open_negotiation_session(
+            goal,
+            conflicts,
+            current_reduction,
+            history,
+        )
+        recipients = self._negotiation_recipients(conflicts)
+        fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
+        cached = self.negotiation_store.lookup(fingerprint)
+        if cached is not None and cached.accepted:
+            decision = NegotiationDecision(
+                accepted=True,
+                isru_reduction_fraction=min(
+                    0.8,
+                    max(current_reduction, cached.isru_reduction_fraction),
+                ),
+                crew_reduction=cached.crew_reduction,
+                dust_degradation_adjustment=cached.dust_degradation_adjustment,
+                rationale=f"[memory hit][{'fallback' if cached.is_fallback else 'llm'}] {cached.rationale}",
+                is_fallback=cached.is_fallback,
+                source="memory",
+            )
+            self.negotiation_store.store(
+                NegotiationOutcome(
+                    conflict_fingerprint=fingerprint,
+                    isru_reduction_fraction=cached.isru_reduction_fraction,
+                    crew_reduction=cached.crew_reduction,
+                    dust_degradation_adjustment=cached.dust_degradation_adjustment,
+                    rationale=cached.rationale,
+                    accepted=cached.accepted,
+                    is_fallback=cached.is_fallback,
+                    stored_at=cached.stored_at,
+                    hit_count=cached.hit_count + 1,
+                    knowledge_fingerprint=fingerprint,
+                )
+            )
+            self._close_negotiation_session(session, decision, recipients)
+            return decision, session
+
+        if (
+            self.negotiator.is_enabled
+            and self.negotiator.is_async_enabled
+            and self.negotiator.async_client is not None
+        ):
             accepted, new_reduction, crew_reduction, dust_adj, rationale = (
-                self.negotiator.negotiate(
+                await self.negotiator.negotiate_async(
                     goal=goal,
                     conflicts=conflicts,
                     current_reduction=current_reduction,
@@ -606,109 +842,7 @@ class CentralPlanner:
                     knowledge_context=knowledge_context,
                 )
             )
-            is_fallback: bool
-            if not accepted:
-                new_reduction, crew_reduction, dust_adj, rationale = (
-                    self._conflict_aware_fallback(
-                        conflicts,
-                        current_reduction,
-                        knowledge_context,
-                    )
-                )
-                is_fallback = True
-            else:
-                is_fallback = False
-            self.negotiation_store.store(
-                NegotiationOutcome(
-                    conflict_fingerprint=fingerprint,
-                    isru_reduction_fraction=new_reduction,
-                    crew_reduction=crew_reduction,
-                    dust_degradation_adjustment=dust_adj,
-                    rationale=rationale,
-                    accepted=True,
-                    is_fallback=is_fallback,
-                    stored_at=now_utc_iso(),
-                    hit_count=0,
-                    knowledge_fingerprint=fingerprint,
-                )
-            )
-        final_reduction = max(current_reduction, new_reduction)
-        updated_goal = dataclasses.replace(
-            goal,
-            crew_size=max(1, goal.crew_size - crew_reduction),
-            dust_degradation_fraction=max(0.0, goal.dust_degradation_fraction - dust_adj),
-        )
-        neg_round = NegotiationRound(
-            round_num=len(history),
-            reduction_fraction=final_reduction,
-            accepted=accepted,
-            rationale=rationale,
-            crew_reduction=crew_reduction,
-            dust_degradation_adjustment=dust_adj,
-        )
-        return final_reduction, updated_goal, rationale, neg_round
-
-    async def _handle_replan_async(
-        self,
-        goal: MissionGoal,
-        conflicts: tuple[CrossDomainConflict, ...],
-        current_reduction: float,
-        knowledge_context: KnowledgeContext,
-        history: tuple[NegotiationRound, ...] = (),
-    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
-        """Async variant of _handle_replan for MCP async planner runtime."""
-        fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
-        cached = self.negotiation_store.lookup(fingerprint)
-        if cached is not None and cached.accepted:
-            new_reduction = min(0.8, max(current_reduction, cached.isru_reduction_fraction))
-            crew_reduction = cached.crew_reduction
-            dust_adj = cached.dust_degradation_adjustment
-            memory_tag = "fallback" if cached.is_fallback else "llm"
-            rationale = f"[memory hit][{memory_tag}] {cached.rationale}"
-            accepted = True
-            self.negotiation_store.store(
-                NegotiationOutcome(
-                    conflict_fingerprint=fingerprint,
-                    isru_reduction_fraction=cached.isru_reduction_fraction,
-                    crew_reduction=crew_reduction,
-                    dust_degradation_adjustment=dust_adj,
-                    rationale=cached.rationale,
-                    accepted=cached.accepted,
-                    is_fallback=cached.is_fallback,
-                    stored_at=cached.stored_at,
-                    hit_count=cached.hit_count + 1,
-                    knowledge_fingerprint=fingerprint,
-                )
-            )
-        else:
-            if (
-                self.negotiator.is_enabled
-                and self.negotiator.is_async_enabled
-                and self.negotiator.async_client is not None
-            ):
-                accepted, new_reduction, crew_reduction, dust_adj, rationale = (
-                    await self.negotiator.negotiate_async(
-                        goal=goal,
-                        conflicts=conflicts,
-                        current_reduction=current_reduction,
-                        history=history,
-                        capabilities=self.registry.all_capabilities(),
-                        knowledge_context=knowledge_context,
-                    )
-                )
-                if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
-                    accepted, new_reduction, crew_reduction, dust_adj, rationale = (
-                        await asyncio.to_thread(
-                            self.negotiator.negotiate,
-                            goal,
-                            conflicts,
-                            current_reduction,
-                            history,
-                            self.registry.all_capabilities(),
-                            knowledge_context,
-                        )
-                    )
-            else:
+            if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
                 accepted, new_reduction, crew_reduction, dust_adj, rationale = (
                     await asyncio.to_thread(
                         self.negotiator.negotiate,
@@ -720,48 +854,124 @@ class CentralPlanner:
                         knowledge_context,
                     )
                 )
-
-            is_fallback: bool
-            if not accepted:
-                new_reduction, crew_reduction, dust_adj, rationale = (
-                    self._conflict_aware_fallback(
-                        conflicts,
-                        current_reduction,
-                        knowledge_context,
-                    )
-                )
-                is_fallback = True
-            else:
-                is_fallback = False
-            self.negotiation_store.store(
-                NegotiationOutcome(
-                    conflict_fingerprint=fingerprint,
-                    isru_reduction_fraction=new_reduction,
-                    crew_reduction=crew_reduction,
-                    dust_degradation_adjustment=dust_adj,
-                    rationale=rationale,
-                    accepted=True,
-                    is_fallback=is_fallback,
-                    stored_at=now_utc_iso(),
-                    hit_count=0,
-                    knowledge_fingerprint=fingerprint,
+        else:
+            accepted, new_reduction, crew_reduction, dust_adj, rationale = (
+                await asyncio.to_thread(
+                    self.negotiator.negotiate,
+                    goal,
+                    conflicts,
+                    current_reduction,
+                    history,
+                    self.registry.all_capabilities(),
+                    knowledge_context,
                 )
             )
-        final_reduction = max(current_reduction, new_reduction)
+
+        is_fallback = False
+        source = "llm"
+        if not accepted:
+            new_reduction, crew_reduction, dust_adj, rationale = self._conflict_aware_fallback(
+                conflicts,
+                current_reduction,
+                knowledge_context,
+            )
+            is_fallback = True
+            source = "fallback"
+        decision = NegotiationDecision(
+            accepted=accepted,
+            isru_reduction_fraction=new_reduction,
+            crew_reduction=crew_reduction,
+            dust_degradation_adjustment=dust_adj,
+            rationale=rationale,
+            is_fallback=is_fallback,
+            source=source,
+        )
+        self.negotiation_store.store(
+            NegotiationOutcome(
+                conflict_fingerprint=fingerprint,
+                isru_reduction_fraction=decision.isru_reduction_fraction,
+                crew_reduction=decision.crew_reduction,
+                dust_degradation_adjustment=decision.dust_degradation_adjustment,
+                rationale=decision.rationale,
+                accepted=True,
+                is_fallback=decision.is_fallback,
+                stored_at=now_utc_iso(),
+                hit_count=0,
+                knowledge_fingerprint=fingerprint,
+            )
+        )
+        self._close_negotiation_session(session, decision, recipients)
+        return decision, session
+
+    def _handle_replan(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        knowledge_context: KnowledgeContext,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
+        """Negotiate or fall back; return (new_reduction, updated_goal, rationale, round)."""
+        decision, _session = self._run_negotiation_session(
+            goal,
+            conflicts,
+            current_reduction,
+            knowledge_context,
+            history,
+        )
+        final_reduction = max(current_reduction, decision.isru_reduction_fraction)
         updated_goal = dataclasses.replace(
             goal,
-            crew_size=max(1, goal.crew_size - crew_reduction),
-            dust_degradation_fraction=max(0.0, goal.dust_degradation_fraction - dust_adj),
+            crew_size=max(1, goal.crew_size - decision.crew_reduction),
+            dust_degradation_fraction=max(
+                0.0,
+                goal.dust_degradation_fraction - decision.dust_degradation_adjustment,
+            ),
         )
         neg_round = NegotiationRound(
             round_num=len(history),
             reduction_fraction=final_reduction,
-            accepted=accepted,
-            rationale=rationale,
-            crew_reduction=crew_reduction,
-            dust_degradation_adjustment=dust_adj,
+            accepted=decision.accepted,
+            rationale=decision.rationale,
+            crew_reduction=decision.crew_reduction,
+            dust_degradation_adjustment=decision.dust_degradation_adjustment,
         )
-        return final_reduction, updated_goal, rationale, neg_round
+        return final_reduction, updated_goal, decision.rationale, neg_round
+
+    async def _handle_replan_async(
+        self,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        knowledge_context: KnowledgeContext,
+        history: tuple[NegotiationRound, ...] = (),
+    ) -> tuple[float, MissionGoal, str, NegotiationRound]:
+        """Async variant of _handle_replan for MCP async planner runtime."""
+        decision, _session = await self._run_negotiation_session_async(
+            goal,
+            conflicts,
+            current_reduction,
+            knowledge_context,
+            history,
+        )
+        final_reduction = max(current_reduction, decision.isru_reduction_fraction)
+        updated_goal = dataclasses.replace(
+            goal,
+            crew_size=max(1, goal.crew_size - decision.crew_reduction),
+            dust_degradation_fraction=max(
+                0.0,
+                goal.dust_degradation_fraction - decision.dust_degradation_adjustment,
+            ),
+        )
+        neg_round = NegotiationRound(
+            round_num=len(history),
+            reduction_fraction=final_reduction,
+            accepted=decision.accepted,
+            rationale=decision.rationale,
+            crew_reduction=decision.crew_reduction,
+            dust_degradation_adjustment=decision.dust_degradation_adjustment,
+        )
+        return final_reduction, updated_goal, decision.rationale, neg_round
 
     def _readiness(
         self,
