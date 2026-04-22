@@ -92,6 +92,11 @@ class DashboardSnapshotResponse(TypedDict):
     replay_degraded_panel: ReplayDegradedPanelResponse
 
 
+class NegotiationSessionsResponse(TypedDict):
+    schema_version: str
+    items: list[dict[str, object]]
+
+
 @dataclass(slots=True)
 class TelemetryEvent:
     recorded_at: str
@@ -146,12 +151,36 @@ class TelemetryQueryService:
 
     def __init__(self, *, max_events: int = 5000) -> None:
         self._events: deque[TelemetryEventPayload] = deque(maxlen=max_events)
+        self._negotiation_sessions: deque[dict[str, object]] = deque(maxlen=250)
 
     def record(self, payload: Mapping[str, object]) -> None:
         event_payload: dict[str, object] = {"recorded_at": _utc_now_iso()}
         for key, value in payload.items():
             event_payload[str(key)] = _redact_value(value, key_name=str(key))
         self._events.append(cast(TelemetryEventPayload, event_payload))
+
+    def record_negotiation_session(self, payload: Mapping[str, object]) -> None:
+        session_payload: dict[str, object] = {"recorded_at": _utc_now_iso()}
+        for key, value in payload.items():
+            session_payload[str(key)] = _redact_value(value, key_name=str(key))
+        self._negotiation_sessions.append(session_payload)
+
+    def list_negotiation_sessions(self, *, limit: int = 10) -> NegotiationSessionsResponse:
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        ordered = sorted(
+            self._negotiation_sessions,
+            key=lambda item: (
+                str(item.get("recorded_at", "")),
+                str(item.get("session_id", "")),
+            ),
+            reverse=True,
+        )
+        return {
+            "schema_version": TELEMETRY_SCHEMA_VERSION,
+            "items": [deepcopy(item) for item in ordered[:limit]],
+        }
 
     def list_events(
         self,

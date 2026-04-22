@@ -54,6 +54,7 @@ from mars_agent.specialists.contracts import (
     ModuleResponse,
     SpecialistCapability,
     Subsystem,
+    TradeoffProposal,
 )
 
 _adapter = MarsMCPAdapter()
@@ -209,6 +210,8 @@ class _SupportsCapabilitiesAndAnalyze(Protocol):
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse: ...
 
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]: ...
+
 
 class _FailingSpecialist:
     """Dev-only specialist wrapper that raises on analyze()."""
@@ -229,6 +232,9 @@ class _FailingSpecialist:
             f"Simulated failure in {self._subsystem.value} "
             f"via {_DEV_FAIL_SPECIALIST_ENV}"
         )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        return self._delegate.propose_tradeoffs(conflict_ids)
 
 
 def _apply_dev_failure_injection() -> None:
@@ -596,6 +602,10 @@ def telemetry_dashboard_snapshot(*, page_size: int = 20) -> Mapping[str, object]
     )
 
 
+def telemetry_negotiation_sessions(*, limit: int = 10) -> Mapping[str, object]:
+    return _TELEMETRY.list_negotiation_sessions(limit=limit)
+
+
 def telemetry_specialist_metrics() -> dict[str, dict[str, float]]:
     """Return a live snapshot of per-specialist metrics keyed by 'specialist.<name>'."""
     return {k: dict(v) for k, v in deepcopy(_TOOL_METRICS).items() if k.startswith("specialist.")}
@@ -639,6 +649,13 @@ def _record_specialist_metric(timing: SpecialistTiming) -> None:
             bucket["last_gate_accepted"] = 0.0
     bucket["last_latency_ms"] = timing.latency_ms
     _persist_runtime_snapshot_best_effort()
+
+
+def _record_negotiation_session(payload: Mapping[str, object]) -> None:
+    _TELEMETRY.record_negotiation_session(payload)
+
+
+_adapter.planner.negotiation_observer = _record_negotiation_session
 
 
 def _record_plan_runtime_metric(*, async_runtime: bool) -> None:

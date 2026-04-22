@@ -21,6 +21,7 @@ from mars_agent.mcp.server import (
     telemetry_dashboard_snapshot,
     telemetry_invocation_detail,
     telemetry_list_events,
+    telemetry_negotiation_sessions,
     telemetry_plan_runtime_metrics,
     telemetry_specialist_metrics,
 )
@@ -623,6 +624,52 @@ def _build_planner_soak_overview() -> dict[str, object]:
     }
 
 
+def _build_negotiation_panel(*, limit: int = 5) -> dict[str, object]:
+    payload = _ensure_mapping(
+        telemetry_negotiation_sessions(limit=limit),
+        label="negotiation_sessions",
+    )
+    _validate_exact_keys(
+        payload,
+        required={"schema_version", "items"},
+        allowed={"schema_version", "items"},
+        label="negotiation_sessions",
+    )
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError("Invalid negotiation_sessions items: expected list")
+
+    items: list[dict[str, object]] = []
+    for raw_item in raw_items:
+        item = dict(_ensure_mapping(raw_item, label="negotiation_sessions.item"))
+        messages_raw = item.get("messages", [])
+        proposals_raw = item.get("proposals", [])
+        messages = messages_raw if isinstance(messages_raw, list) else []
+        proposals = proposals_raw if isinstance(proposals_raw, list) else []
+        decision = _ensure_mapping(item.get("decision", {}), label="negotiation_sessions.decision")
+        items.append(
+            {
+                "session_id": item.get("session_id", ""),
+                "round_id": item.get("round_id", ""),
+                "recorded_at": item.get("recorded_at"),
+                "mission_id": item.get("mission_id", ""),
+                "current_phase": item.get("current_phase", ""),
+                "current_reduction": item.get("current_reduction", 0.0),
+                "conflict_ids": item.get("conflict_ids", []),
+                "decision": dict(decision),
+                "proposals": proposals,
+                "messages": messages,
+                "message_count": len(messages),
+                "proposal_count": len(proposals),
+            }
+        )
+
+    return {
+        "schema_version": payload.get("schema_version"),
+        "items": items,
+    }
+
+
 def _build_dag_nodes(
     present: set[str],
     ordered: list[dict[str, object]],
@@ -854,6 +901,22 @@ def soak_overview_fragment(request: Request) -> HTMLResponse:
         context={
             "ui_schema_version": UI_SCHEMA_VERSION,
             "soak": soak,
+        },
+    )
+
+
+@app.get("/dashboard/fragments/negotiations", response_class=HTMLResponse)
+def negotiations_fragment(request: Request) -> HTMLResponse:
+    try:
+        negotiations = _build_negotiation_panel()
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return templates.TemplateResponse(
+        request=request,
+        name="fragments/negotiations.html",
+        context={
+            "ui_schema_version": UI_SCHEMA_VERSION,
+            "negotiations": negotiations,
         },
     )
 

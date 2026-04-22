@@ -103,4 +103,8 @@
 <article class="card" id="soak-overview-panel" hx-get="/dashboard/fragments/soak-overview" hx-trigger="load, every 60s" hx-swap="innerHTML">
   <div class="skeleton">Loading planner soak overview...</div>
 </article>
+
+<article class="card" id="negotiations-panel" hx-get="/dashboard/fragments/negotiations" hx-trigger="load, every 20s" hx-swap="innerHTML">
+  <div class="skeleton">Loading negotiation sessions...</div>
+</article>
 {% endblock %}

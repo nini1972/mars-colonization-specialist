@@ -1,0 +1,81 @@
+<div class="fragment" data-fragment="negotiations" data-fragment-required="ui_schema_version,negotiations" data-fragment-allowed="ui_schema_version,negotiations">
+  <div class="card-head">
+    <h2>Negotiation Sessions</h2>
+    <span class="pill">Transcript-driven</span>
+  </div>
+
+  {% set items = negotiations["items"] %}
+  {% if items %}
+  <div class="muted">Latest deterministic negotiation transcripts and specialist-authored proposals.</div>
+  <div class="stack-list">
+    {% for item in items %}
+    <section class="detail-block">
+      <div class="card-head">
+        <h3>{{ item.session_id }}</h3>
+        <span class="pill">{{ item.decision.source }}</span>
+      </div>
+      <p class="muted">
+        Mission {{ item.mission_id }} · Phase {{ item.current_phase }} · Round {{ item.round_id }} ·
+        Conflicts {{ item.conflict_ids|join(', ') if item.conflict_ids else 'none' }}
+      </p>
+      <div class="metric-grid">
+        <div class="metric-card">
+          <span class="metric-label">Source</span>
+          <strong class="metric-value">{{ item.decision.source }}</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Fallback</span>
+          <strong class="metric-value">{{ 'yes' if item.decision.is_fallback else 'no' }}</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Proposals</span>
+          <strong class="metric-value">{{ item.proposal_count }}</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Messages</span>
+          <strong class="metric-value">{{ item.message_count }}</strong>
+        </div>
+      </div>
+      <p><strong>Rationale:</strong> {{ item.decision.rationale }}</p>
+
+      {% if item.proposals %}
+      <h4>Specialist Proposals</h4>
+      <div class="stack-list">
+        {% for proposal in item.proposals %}
+        <div>
+          <strong>{{ proposal.subsystem }}</strong> · {{ proposal.knob_name }} = {{ proposal.suggested_delta }}
+          <br>
+          <span class="muted">{{ proposal.rationale }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <h4>Transcript</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Seq</th>
+            <th>Sender</th>
+            <th>Kind</th>
+            <th>Recipients</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for message in item.messages %}
+          <tr>
+            <td>{{ message.sequence }}</td>
+            <td>{{ message.sender }}</td>
+            <td>{{ message.kind }}</td>
+            <td>{{ message.recipients|join(', ') if message.recipients else 'planner' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No negotiation sessions recorded yet. Trigger a constrained `mars.plan` run to populate this panel.</p>
+  {% endif %}
+</div>

@@ -188,3 +188,23 @@ def test_collect_specialist_proposals_returns_deterministic_sorted_proposals() -
         ("isru", "isru_reduction_fraction"),
         ("power", "dust_degradation_adjustment"),
     ]
+
+
+def test_negotiation_observer_receives_session_payload() -> None:
+    captured: list[dict[str, object]] = []
+    planner = CentralPlanner(negotiation_observer=lambda payload: captured.append(dict(payload)))
+
+    planner._run_negotiation_session(
+        goal=_goal(),
+        conflicts=(_conflict(),),
+        current_reduction=0.0,
+        knowledge_context=_knowledge_context(),
+        history=(),
+    )
+
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload["mission_id"] == "negotiation-protocol-test"
+    assert payload["session_id"]
+    assert isinstance(payload["messages"], list)
+    assert isinstance(payload["proposals"], list)

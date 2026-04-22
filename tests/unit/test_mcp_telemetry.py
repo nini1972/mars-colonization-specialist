@@ -157,3 +157,40 @@ def test_telemetry_overview_health_and_counts() -> None:
     assert overview["counts"]["successes"] == 1
     assert overview["counts"]["failures"] == 1
     assert overview["health"]["status"] == "degraded"
+
+
+def test_telemetry_negotiation_sessions_are_listed_deterministically() -> None:
+    service = TelemetryQueryService(max_events=20)
+    service.record_negotiation_session(
+        {
+            "session_id": "neg-1",
+            "round_id": "round-0",
+            "mission_id": "mars-a",
+            "current_phase": "early_operations",
+            "current_reduction": 0.0,
+            "conflict_ids": ["coupling.power_balance.shortfall"],
+            "decision": {"source": "fallback", "rationale": "reduce load"},
+            "proposals": [{"subsystem": "isru", "knob_name": "isru_reduction_fraction"}],
+            "messages": [{"sequence": 0, "kind": "session_started"}],
+        }
+    )
+    service.record_negotiation_session(
+        {
+            "session_id": "neg-2",
+            "round_id": "round-1",
+            "mission_id": "mars-b",
+            "current_phase": "scaling",
+            "current_reduction": 0.1,
+            "conflict_ids": ["coupling.power_margin.low"],
+            "decision": {"source": "memory", "rationale": "replay"},
+            "proposals": [],
+            "messages": [{"sequence": 0, "kind": "session_started"}],
+        }
+    )
+
+    response = service.list_negotiation_sessions(limit=5)
+
+    assert response["schema_version"] == TELEMETRY_SCHEMA_VERSION
+    assert len(response["items"]) == 2
+    assert response["items"][0]["session_id"] == "neg-2"
+    assert response["items"][1]["session_id"] == "neg-1"

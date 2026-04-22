@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import dataclasses
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -49,6 +51,8 @@ from mars_agent.specialists import (
     UncertaintyBounds,
 )
 from mars_agent.specialists.contracts import TradeoffProposal
+
+logger = logging.getLogger(__name__)
 
 
 class _HasAnalyze(Protocol):
@@ -149,6 +153,7 @@ class CentralPlanner:
     negotiation_store: NegotiationMemoryStore = field(default_factory=NegotiationMemoryStore)
     retrieval_index: RetrievalIndex | None = None
     ontology_store: OntologyStore | None = None
+    negotiation_observer: Callable[[Mapping[str, object]], None] | None = None
 
     def __post_init__(self) -> None:
         if self.settings.negotiation_store_path is not None:
@@ -625,6 +630,62 @@ class CentralPlanner:
             )
         )
 
+    def _publish_negotiation_session(
+        self,
+        *,
+        goal: MissionGoal,
+        conflicts: tuple[CrossDomainConflict, ...],
+        current_reduction: float,
+        decision: NegotiationDecision,
+        proposals: tuple[TradeoffProposal, ...],
+        session: NegotiationSession,
+    ) -> None:
+        observer = self.negotiation_observer
+        if observer is None:
+            return
+
+        payload: dict[str, object] = {
+            "session_id": session.session_id,
+            "round_id": session.round_id,
+            "mission_id": goal.mission_id,
+            "current_phase": goal.current_phase.value,
+            "current_reduction": current_reduction,
+            "conflict_ids": [conflict.conflict_id for conflict in conflicts],
+            "decision": {
+                "accepted": decision.accepted,
+                "isru_reduction_fraction": decision.isru_reduction_fraction,
+                "crew_reduction": decision.crew_reduction,
+                "dust_degradation_adjustment": decision.dust_degradation_adjustment,
+                "rationale": decision.rationale,
+                "is_fallback": decision.is_fallback,
+                "source": decision.source,
+            },
+            "proposals": [
+                {
+                    "subsystem": proposal.subsystem.value,
+                    "knob_name": proposal.knob_name,
+                    "suggested_delta": proposal.suggested_delta,
+                    "rationale": proposal.rationale,
+                    "conflict_ids": list(proposal.conflict_ids),
+                }
+                for proposal in proposals
+            ],
+            "messages": [
+                {
+                    "sequence": message.sequence,
+                    "sender": message.sender,
+                    "recipients": list(message.recipients),
+                    "kind": message.kind.value,
+                    "payload": dict(message.payload),
+                }
+                for message in session.transcript.messages
+            ],
+        }
+        try:
+            observer(payload)
+        except Exception:  # noqa: BLE001
+            logger.warning("Negotiation observer failed.", exc_info=True)
+
     @staticmethod
     def _negotiation_recipients(
         conflicts: tuple[CrossDomainConflict, ...],
@@ -804,6 +865,14 @@ class CentralPlanner:
                 )
             )
             self._close_negotiation_session(session, decision, recipients)
+            self._publish_negotiation_session(
+                goal=goal,
+                conflicts=conflicts,
+                current_reduction=current_reduction,
+                decision=decision,
+                proposals=proposals,
+                session=session,
+            )
             return decision, session
 
         accepted, new_reduction, crew_reduction, dust_adj, rationale = self.negotiator.negotiate(
@@ -850,6 +919,14 @@ class CentralPlanner:
             )
         )
         self._close_negotiation_session(session, decision, recipients)
+        self._publish_negotiation_session(
+            goal=goal,
+            conflicts=conflicts,
+            current_reduction=current_reduction,
+            decision=decision,
+            proposals=proposals,
+            session=session,
+        )
         return decision, session
 
     async def _run_negotiation_session_async(
@@ -910,6 +987,14 @@ class CentralPlanner:
                 )
             )
             self._close_negotiation_session(session, decision, recipients)
+            self._publish_negotiation_session(
+                goal=goal,
+                conflicts=conflicts,
+                current_reduction=current_reduction,
+                decision=decision,
+                proposals=proposals,
+                session=session,
+            )
             return decision, session
 
         if (
@@ -990,6 +1075,14 @@ class CentralPlanner:
             )
         )
         self._close_negotiation_session(session, decision, recipients)
+        self._publish_negotiation_session(
+            goal=goal,
+            conflicts=conflicts,
+            current_reduction=current_reduction,
+            decision=decision,
+            proposals=proposals,
+            session=session,
+        )
         return decision, session
 
     def _handle_replan(

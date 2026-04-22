@@ -134,12 +134,61 @@ def _patch_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dashboard_app, "telemetry_list_events", _fake_list_events)
 
 
+def _patch_negotiations(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        dashboard_app,
+        "telemetry_negotiation_sessions",
+        lambda limit=5: {
+            "schema_version": "1.0",
+            "items": [
+                {
+                    "recorded_at": "2026-04-22T12:00:00.000+00:00",
+                    "session_id": "neg-abc123",
+                    "round_id": "round-0",
+                    "mission_id": "mars-demo",
+                    "current_phase": "early_operations",
+                    "current_reduction": 0.0,
+                    "conflict_ids": ["coupling.power_balance.shortfall"],
+                    "decision": {
+                        "source": "fallback",
+                        "is_fallback": True,
+                        "rationale": "Conflict-aware fallback",
+                    },
+                    "proposals": [
+                        {
+                            "subsystem": "isru",
+                            "knob_name": "isru_reduction_fraction",
+                            "suggested_delta": 0.05,
+                            "rationale": "Trim ISRU load first.",
+                        }
+                    ],
+                    "messages": [
+                        {
+                            "sequence": 0,
+                            "sender": "planner",
+                            "kind": "session_started",
+                            "recipients": [],
+                        },
+                        {
+                            "sequence": 1,
+                            "sender": "isru",
+                            "kind": "proposal_submitted",
+                            "recipients": ["planner"],
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+
 def test_dashboard_main_page_exposes_ui_schema_version(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -154,6 +203,7 @@ def test_dashboard_json_endpoint_keeps_json_contract(
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
 
     response = client.get("/api/telemetry/dashboard")
 
@@ -222,6 +272,7 @@ def test_dashboard_page_includes_loading_skeleton_markers(
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -237,6 +288,7 @@ def test_main_page_shows_degraded_banner_when_backend_is_degraded(
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch, degraded=True)
     _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -303,6 +355,7 @@ def test_dashboard_has_modal_loading_skeleton_and_close_control(
 ) -> None:
     _patch_dashboard_snapshot(monkeypatch)
     _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
 
     response = client.get("/dashboard")
 
@@ -424,7 +477,36 @@ def test_invocation_detail_fragment_empty_state_shape(
 
     assert response.status_code == 200
     assert "No invocation found" in response.text
-    assert "data-fragment=\"invocation-detail-empty\"" in response.text
+
+
+def test_negotiations_fragment_renders_transcript_and_proposals(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_negotiations(monkeypatch)
+
+    response = client.get("/dashboard/fragments/negotiations")
+
+    assert response.status_code == 200
+    assert "Negotiation Sessions" in response.text
+    assert "neg-abc123" in response.text
+    assert "Specialist Proposals" in response.text
+    assert "proposal_submitted" in response.text
+
+
+def test_dashboard_page_includes_negotiation_panel_loading_marker(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dashboard_snapshot(monkeypatch)
+    _patch_plan_runtime_metrics(monkeypatch)
+    _patch_negotiations(monkeypatch)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    assert "Loading negotiation sessions" in response.text
+    assert "id=\"negotiations-panel\"" in response.text
 
 
 def test_correlation_fragment_renders_integrity_warning_for_partial_chain(

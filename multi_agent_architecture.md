@@ -147,4 +147,21 @@ Latest Alignment Update (Phase 11 Step 2)
 	- the final executable decision still collapses into the existing plan/replan contract
 - Phase 11 Step 3 should expose transcript/proposal observability and then introduce bounded specialist-to-specialist message handling on top of the current deterministic scheduler.
 
+Latest Alignment Update (Phase 11 Step 3)
+
+- Negotiation transcript observability is now implemented on internal telemetry/dashboard surfaces.
+- `CentralPlanner` publishes completed negotiation sessions via an observer hook, keeping the planning result and MCP tool payloads unchanged.
+- MCP telemetry now stores recent negotiation sessions separately from tool invocation events, so transcript visibility does not distort existing overview/event counts.
+- Dashboard now exposes a `Negotiation Sessions` fragment that shows:
+	- recent session IDs / rounds / mission phase
+	- decision source (`llm`, `fallback`, or `memory`)
+	- specialist-authored proposals
+	- ordered transcript messages for the session
+- This completes the observability precondition for moving to bounded agent-to-agent message handling.
+- The system is still not fully peer-to-peer yet:
+	- specialists still do not consume each other's transcript messages directly
+	- the planner still hosts and closes the session
+	- the final plan contract remains unchanged
+- Phase 11 Step 4 should introduce deterministic specialist-to-specialist message consumption while reusing the transcript, observer, and dashboard surfaces added in Steps 1-3.
+
 Claude Sonnet 4.6 • 1x
