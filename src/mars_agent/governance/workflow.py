@@ -147,6 +147,11 @@ class GovernanceWorkflow:
             "created_at": result.manifest.created_at.isoformat(),
             "changed_doc_ids": list(result.manifest.changed_doc_ids),
             "notes": result.manifest.notes,
+            "rationale_type": result.manifest.rationale_type,
+            "governance_policy_version": result.manifest.governance_policy_version,
+            "benchmark_profile": result.manifest.benchmark_profile,
+            "benchmark_policy_version": result.manifest.benchmark_policy_version,
+            "artifact_provenance": list(result.manifest.artifact_provenance),
         }
         manifest_path.write_text(
             json.dumps(manifest_payload, indent=2, sort_keys=True),

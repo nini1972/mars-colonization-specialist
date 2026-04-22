@@ -9,6 +9,8 @@
 - Composed `GovernanceWorkflow` that runs governance review, benchmarking, audit record construction, and release finalization in one deterministic path.
 - Deterministic release bundle export containing manifest JSON, bulletin markdown, and audit JSON under a single output directory.
 - Operator-facing `mars.release` MCP tool that wraps the composed workflow and can export the deterministic bundle in one call.
+- Named benchmark policy metadata on every benchmark run (`profile`, `policy_version`, `policy_source`) instead of anonymous default references.
+- Hardened release manifest metadata including `governance_policy_version`, `benchmark_profile`, `benchmark_policy_version`, `rationale_type`, and `artifact_provenance`.
 
 ## Governance guarantees
 
@@ -19,7 +21,9 @@
 ## Notes
 
 - Benchmark references are configurable and include source provenance metadata.
+- The default benchmark policy is now explicit and reviewable as `nasa-esa-mission-review@2026.03`, and that identity is persisted into benchmark reports, bulletins, manifests, and `mars.release` responses.
 - Release bulletins are generated as reproducible markdown summaries.
 - When `GovernanceWorkflow.finalize_quarterly()` or `finalize_hotfix()` receives an `audit_path`, it exports the audit JSON before release hardening checks raise, so blocked releases still leave behind review evidence.
 - `GovernanceWorkflow.export_release_bundle()` writes release artifacts using filenames derived from `{version}-{release_type}`, preserving deterministic artifact naming for operator review and CI archiving.
 - `mars.release` accepts a shared payload for quarterly and hotfix release lanes (`release_type`, `version`, `changed_doc_ids`, `summary`) and optionally persists manifest, bulletin, and audit artifacts under `output_dir`.
+- Release manifests now capture both policy versions and deterministic provenance hints, so archived bundles can be traced back to the governance policy file and benchmark source bundle that gated the release.

@@ -613,6 +613,12 @@ def test_transport_release_matches_adapter_invoke_output(
     assert _normalize_payload(_unwrap_success(actual_release)) == _normalize_payload(
         expected_release
     )
+    release_payload = _unwrap_success(actual_release)["release"]
+    assert isinstance(release_payload, dict)
+    manifest_payload = release_payload.get("manifest")
+    assert isinstance(manifest_payload, dict)
+    assert manifest_payload["benchmark_policy_version"] == "2026.03"
+    assert manifest_payload["governance_policy_version"] == "knowledge-release-policy.v1"
     assert (bundle_dir / "2026.Q3-quarterly-manifest.json").exists()
     assert (bundle_dir / "2026.Q3-quarterly-bulletin.md").exists()
     assert (bundle_dir / "2026.Q3-quarterly-audit.json").exists()

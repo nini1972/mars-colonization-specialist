@@ -279,6 +279,12 @@ def test_mcp_release_parity_matches_composed_workflow(tmp_path: Path) -> None:
     }
 
     assert _strip_created_at(release_result) == _strip_created_at(expected)
+    release_payload = release_result["release"]
+    assert isinstance(release_payload, dict)
+    manifest_payload = release_payload.get("manifest")
+    assert isinstance(manifest_payload, dict)
+    assert manifest_payload["benchmark_profile"] == "nasa-esa-mission-review"
+    assert manifest_payload["governance_policy_version"] == "knowledge-release-policy.v1"
     assert (output_dir / "2026.HF-02-hotfix-manifest.json").exists()
     assert (output_dir / "2026.HF-02-hotfix-bulletin.md").exists()
     assert (output_dir / "2026.HF-02-hotfix-audit.json").exists()

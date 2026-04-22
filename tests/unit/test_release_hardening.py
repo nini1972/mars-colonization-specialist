@@ -35,8 +35,11 @@ def test_release_hardening_finalizes_quarterly_release() -> None:
     )
 
     assert manifest.release_type == "quarterly"
+    assert manifest.benchmark_profile == "nasa-esa-mission-review"
+    assert manifest.governance_policy_version == "knowledge-release-policy.v1"
     text = render_bulletin_markdown(bulletin)
     assert "Release Bulletin 2026.Q2" in text
+    assert "Benchmark policy: nasa-esa-mission-review@2026.03" in text
 
 
 def test_release_hardening_blocks_failed_governance() -> None:

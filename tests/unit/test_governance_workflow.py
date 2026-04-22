@@ -86,6 +86,8 @@ def test_governance_workflow_finalizes_quarterly_and_exports_audit(
     assert result.review.governance.accepted is True
     assert result.review.benchmark.passed is True
     assert result.manifest.release_type == "quarterly"
+    assert result.manifest.benchmark_profile == "nasa-esa-mission-review"
+    assert result.manifest.governance_policy_version == "knowledge-release-policy.v1"
     assert "Release Bulletin 2026.Q2" in result.bulletin_markdown
 
     payload = json.loads(audit_path.read_text(encoding="utf-8"))
@@ -114,6 +116,10 @@ def test_governance_workflow_exports_release_bundle(tmp_path: Path) -> None:
 
     assert manifest_payload["version"] == "2026.HF-01"
     assert manifest_payload["release_type"] == "hotfix"
+    assert manifest_payload["benchmark_profile"] == "nasa-esa-mission-review"
+    assert manifest_payload["benchmark_policy_version"] == "2026.03"
+    assert manifest_payload["governance_policy_version"] == "knowledge-release-policy.v1"
+    assert manifest_payload["artifact_provenance"]
     assert audit_payload["mission_id"] == "mars-phase6-workflow"
     assert "Release Bulletin 2026.HF-01" in bulletin_text
 

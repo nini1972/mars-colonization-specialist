@@ -50,6 +50,9 @@ class BenchmarkReport:
 
     passed: bool
     deltas: tuple[BenchmarkDelta, ...]
+    profile: str = "nasa-esa-mission-review"
+    policy_version: str = "2026.03"
+    policy_source: str = "NASA/ESA mission review benchmark bundle"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,5 +63,9 @@ class ReleaseBulletin:
     release_type: str
     governance_passed: bool
     benchmark_passed: bool
+    governance_policy_version: str
+    benchmark_profile: str
+    benchmark_policy_version: str
     changed_doc_ids: tuple[str, ...]
+    rationale_type: str
     summary: str

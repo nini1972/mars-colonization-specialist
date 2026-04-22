@@ -41,6 +41,8 @@ def test_benchmark_harness_computes_metric_deltas() -> None:
     report = BenchmarkHarness().run(plan=plan, simulation=simulation)
 
     assert report.deltas
+    assert report.profile == "nasa-esa-mission-review"
+    assert report.policy_version == "2026.03"
     assert any(item.metric == "load_margin_kw" for item in report.deltas)
 
 
@@ -62,4 +64,5 @@ def test_benchmark_harness_can_fail_on_tight_tolerance() -> None:
     report = strict.run(plan=plan, simulation=simulation)
 
     assert not report.passed
+    assert report.policy_source == "NASA/ESA mission review benchmark bundle"
     assert report.deltas[0].within_tolerance is False

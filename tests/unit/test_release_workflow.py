@@ -18,7 +18,12 @@ def test_release_planner_creates_quarterly_and_hotfix_manifests() -> None:
     )
 
     assert quarterly.release_type == "quarterly"
+    assert quarterly.rationale_type == "release_notes"
+    assert quarterly.governance_policy_version == "knowledge-release-policy.v1"
+    assert quarterly.benchmark_profile == "nasa-esa-mission-review"
     assert hotfix.release_type == "hotfix"
+    assert hotfix.rationale_type == "hotfix_reason"
+    assert "configs/knowledge_release_policy.toml" in hotfix.artifact_provenance
 
 
 def test_release_planner_rejects_empty_changes() -> None:

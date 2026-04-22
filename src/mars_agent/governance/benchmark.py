@@ -42,6 +42,9 @@ def default_references() -> tuple[BenchmarkReference, ...]:
 class BenchmarkHarness:
     """Computes metric deltas against benchmark references."""
 
+    profile: str = "nasa-esa-mission-review"
+    policy_version: str = "2026.03"
+    policy_source: str = "NASA/ESA mission review benchmark bundle"
     references: tuple[BenchmarkReference, ...] = field(default_factory=default_references)
 
     def _observed_metrics(self, plan: PlanResult, simulation: SimulationReport) -> dict[str, float]:
@@ -91,4 +94,10 @@ class BenchmarkHarness:
             )
 
         passed = all(item.within_tolerance for item in deltas)
-        return BenchmarkReport(passed=passed, deltas=tuple(deltas))
+        return BenchmarkReport(
+            passed=passed,
+            profile=self.profile,
+            policy_version=self.policy_version,
+            policy_source=self.policy_source,
+            deltas=tuple(deltas),
+        )
