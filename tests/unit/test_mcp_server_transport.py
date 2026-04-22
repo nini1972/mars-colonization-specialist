@@ -16,11 +16,18 @@ from mcp.types import CallToolResult, LoggingMessageNotificationParams
 
 pytest.importorskip("mcp.server.fastmcp")
 
+from mars_agent.governance import BenchmarkHarness, BenchmarkReference
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.mcp import server as mcp_server
 from mars_agent.mcp.adapter import MarsMCPAdapter
 from mars_agent.mcp.persistence import PersistenceCorruptionError, PersistenceUnavailableError
-from mars_agent.mcp.server import mars_benchmark, mars_governance, mars_plan, mars_simulate
+from mars_agent.mcp.server import (
+    mars_benchmark,
+    mars_governance,
+    mars_plan,
+    mars_release,
+    mars_simulate,
+)
 from mars_agent.orchestration import MissionGoal, MissionPhase
 from mars_agent.reasoning.models import EvidenceReference
 
@@ -94,6 +101,31 @@ def _normalize_payload(value: object) -> object:
     if isinstance(value, list):
         return [_normalize_payload(item) for item in value]
     return value
+
+
+def _permissive_benchmark_harness() -> BenchmarkHarness:
+    return BenchmarkHarness(
+        references=(
+            BenchmarkReference(
+                metric="load_margin_kw",
+                target=15.0,
+                tolerance=1000.0,
+                source="Synthetic permissive margin reference",
+            ),
+            BenchmarkReference(
+                metric="resource_surplus_ratio",
+                target=1.2,
+                tolerance=1000.0,
+                source="Synthetic permissive surplus reference",
+            ),
+            BenchmarkReference(
+                metric="storage_cover_hours",
+                target=20.0,
+                tolerance=1000.0,
+                source="Synthetic permissive storage reference",
+            ),
+        )
+    )
 
 
 def _unwrap_success(payload: dict[str, object]) -> dict[str, object]:
@@ -494,6 +526,96 @@ def test_transport_end_to_end_pipeline_matches_adapter_invoke_output() -> None:
     assert _normalize_payload(_unwrap_success(actual_benchmark)) == _normalize_payload(
         expected_benchmark
     )
+
+
+def test_transport_release_matches_adapter_invoke_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    goal = _goal()
+    evidence = _evidence()
+    bundle_dir = tmp_path / "release-bundle"
+    benchmark_harness = _permissive_benchmark_harness()
+    monkeypatch.setattr(mcp_server._adapter, "benchmark_harness", benchmark_harness)
+
+    adapter = MarsMCPAdapter(benchmark_harness=benchmark_harness)
+    expected_plan = adapter.invoke(
+        "mars.plan",
+        {
+            "goal": _goal_payload(goal),
+            "evidence": _evidence_payload(evidence),
+        },
+    )
+    expected_plan_id = expected_plan["plan_id"]
+    assert isinstance(expected_plan_id, str)
+
+    expected_simulation = adapter.invoke(
+        "mars.simulate",
+        {
+            "plan_id": expected_plan_id,
+            "seed": 42,
+            "max_repair_attempts": 2,
+        },
+    )
+    expected_simulation_id = expected_simulation["simulation_id"]
+    assert isinstance(expected_simulation_id, str)
+
+    expected_release = adapter.invoke(
+        "mars.release",
+        {
+            "plan_id": expected_plan_id,
+            "simulation_id": expected_simulation_id,
+            "release_type": "quarterly",
+            "version": "2026.Q3",
+            "changed_doc_ids": ["doc-1", "doc-2"],
+            "summary": "Quarterly MCP release review.",
+            "output_dir": str(bundle_dir),
+            "min_confidence": 0.75,
+        },
+    )
+
+    actual_plan = _call_direct_sync(
+        mars_plan(
+            goal=_goal_payload(goal),
+            evidence=_evidence_payload(evidence),
+            request_id="req-direct-release-plan",
+        )
+    )
+    actual_plan_id = _unwrap_success(actual_plan)["plan_id"]
+    assert isinstance(actual_plan_id, str)
+
+    actual_simulation = _call_direct_sync(
+        mars_simulate(
+            plan_id=actual_plan_id,
+            seed=42,
+            max_repair_attempts=2,
+            request_id="req-direct-release-sim",
+        )
+    )
+    actual_simulation_id = _unwrap_success(actual_simulation)["simulation_id"]
+    assert isinstance(actual_simulation_id, str)
+
+    actual_release = _call_direct_sync(
+        mars_release(
+            plan_id=actual_plan_id,
+            simulation_id=actual_simulation_id,
+            release_type="quarterly",
+            version="2026.Q3",
+            changed_doc_ids=["doc-1", "doc-2"],
+            summary="Quarterly MCP release review.",
+            min_confidence=0.75,
+            output_dir=str(bundle_dir),
+            request_id="req-direct-release",
+        )
+    )
+
+    assert actual_release["request_id"] == "req-direct-release"
+    assert _normalize_payload(_unwrap_success(actual_release)) == _normalize_payload(
+        expected_release
+    )
+    assert (bundle_dir / "2026.Q3-quarterly-manifest.json").exists()
+    assert (bundle_dir / "2026.Q3-quarterly-bulletin.md").exists()
+    assert (bundle_dir / "2026.Q3-quarterly-audit.json").exists()
 
 
 def test_transport_stdio_call_matches_adapter_and_emits_request_id() -> None:

@@ -23,10 +23,12 @@ from mars_agent.mcp.adapter import (
     MCPValue,
     _optional_float,
     _optional_int,
+    _optional_string,
     _parse_evidence,
     _parse_goal,
     _require_mapping,
     _require_string,
+    _require_string_sequence,
     to_mcp_value,
 )
 from mars_agent.mcp.persistence import (
@@ -89,12 +91,13 @@ _SPECIALIST_METRIC_KEYS = (
     "fault_count",
     "last_failed",
 )
-_ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark", "telemetry"}
+_ALL_TOOL_PERMISSIONS = {"plan", "simulate", "governance", "benchmark", "release", "telemetry"}
 _TOOL_PERMISSION_BY_NAME = {
     "mars.plan": "plan",
     "mars.simulate": "simulate",
     "mars.governance": "governance",
     "mars.benchmark": "benchmark",
+    "mars.release": "release",
     "mars.telemetry.overview": "telemetry",
     "mars.telemetry.events": "telemetry",
     "mars.telemetry.invocation": "telemetry",
@@ -851,6 +854,21 @@ def _validate_transport_arguments(tool_name: str, arguments: Mapping[str, object
         _require_string(arguments, "simulation_id")
         return
 
+    if tool_name == "mars.release":
+        _require_string(arguments, "plan_id")
+        _require_string(arguments, "simulation_id")
+        release_type = _require_string(arguments, "release_type")
+        if release_type not in {"quarterly", "hotfix"}:
+            raise ValueError("Argument 'release_type' must be either 'quarterly' or 'hotfix'")
+        _require_string(arguments, "version")
+        _require_string_sequence(arguments, "changed_doc_ids")
+        _require_string(arguments, "summary")
+        min_confidence = _optional_float(arguments, "min_confidence", 0.85)
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("Argument 'min_confidence' must be between 0.0 and 1.0")
+        _optional_string(arguments, "output_dir")
+        return
+
     if tool_name == "mars.telemetry.overview":
         return
 
@@ -1148,6 +1166,15 @@ async def _invoke_runtime_tool(
             timeout_seconds=_configured_tool_timeout_seconds(),
         )
         return {"benchmark": cast(object, to_mcp_value(benchmark))}
+
+    if tool_name == "mars.release":
+        def _compute_release() -> dict[str, object]:
+            return _as_object_dict(_adapter.invoke(tool_name, arguments))
+
+        return await _run_bounded_sync(
+            _compute_release,
+            timeout_seconds=_configured_tool_timeout_seconds(),
+        )
 
     raise KeyError(f"Unsupported MCP tool: {tool_name}")
 
@@ -1501,6 +1528,37 @@ async def mars_benchmark(
     )
 
 
+async def mars_release(
+    plan_id: str,
+    simulation_id: str,
+    release_type: str,
+    version: str,
+    changed_doc_ids: list[str],
+    summary: str,
+    min_confidence: float = 0.85,
+    output_dir: str | None = None,
+    request_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, object]:
+    """Finalize a governance release and optionally export a deterministic bundle."""
+
+    return await _invoke_with_envelope(
+        tool_name="mars.release",
+        arguments={
+            "plan_id": plan_id,
+            "simulation_id": simulation_id,
+            "release_type": release_type,
+            "version": version,
+            "changed_doc_ids": changed_doc_ids,
+            "summary": summary,
+            "min_confidence": min_confidence,
+            "output_dir": output_dir,
+        },
+        request_id=request_id,
+        auth_token=auth_token,
+    )
+
+
 async def mars_telemetry_overview(
     request_id: str | None = None,
     auth_token: str | None = None,
@@ -1589,6 +1647,7 @@ mcp.tool(name="mars.plan")(mars_plan)
 mcp.tool(name="mars.simulate")(mars_simulate)
 mcp.tool(name="mars.governance")(mars_governance)
 mcp.tool(name="mars.benchmark")(mars_benchmark)
+mcp.tool(name="mars.release")(mars_release)
 mcp.tool(name="mars.telemetry.overview")(mars_telemetry_overview)
 mcp.tool(name="mars.telemetry.events")(mars_telemetry_events)
 mcp.tool(name="mars.telemetry.invocation")(mars_telemetry_invocation)

@@ -1,4 +1,4 @@
-"""Phase 7 MCP adapter exposing planner, simulation, and governance tools."""
+"""Phase 7 MCP adapter exposing planning, simulation, governance, and release tools."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
+from pathlib import Path
 
-from mars_agent.governance import BenchmarkHarness, GovernanceGate
+from mars_agent.governance import BenchmarkHarness, GovernanceGate, GovernanceWorkflow
 from mars_agent.knowledge.models import TrustTier
 from mars_agent.orchestration import CentralPlanner, MissionGoal, MissionPhase
 from mars_agent.orchestration.models import PlanResult
@@ -33,6 +34,8 @@ def to_mcp_value(value: object) -> MCPValue:
 
     if value is None:
         return None
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, Enum):
@@ -67,6 +70,28 @@ def _require_string(arguments: Mapping[str, object], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"Argument '{key}' must be a non-empty string")
     return value
+
+
+def _optional_string(arguments: Mapping[str, object], key: str) -> str | None:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str) and value:
+        return value
+    raise ValueError(f"Argument '{key}' must be a non-empty string when provided")
+
+
+def _require_string_sequence(arguments: Mapping[str, object], key: str) -> tuple[str, ...]:
+    value = arguments.get(key)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"Argument '{key}' must be an array of non-empty strings")
+
+    parsed: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{key}[{index}] must be a non-empty string")
+        parsed.append(item)
+    return tuple(parsed)
 
 
 def _optional_float(arguments: Mapping[str, object], key: str, default: float) -> float:
@@ -220,6 +245,21 @@ class MarsMCPAdapter:
                 description="Evaluate benchmark deltas using plan and simulation outputs.",
                 required_arguments=("plan_id", "simulation_id"),
             ),
+            ToolDefinition(
+                name="mars.release",
+                description=(
+                    "Finalize a quarterly or hotfix governance release and optionally "
+                    "export a deterministic bundle."
+                ),
+                required_arguments=(
+                    "plan_id",
+                    "simulation_id",
+                    "release_type",
+                    "version",
+                    "changed_doc_ids",
+                    "summary",
+                ),
+            ),
         )
 
     def invoke(self, tool_name: str, arguments: Mapping[str, object]) -> dict[str, MCPValue]:
@@ -262,6 +302,30 @@ class MarsMCPAdapter:
             plan_id = _require_string(arguments, "plan_id")
             simulation_id = _require_string(arguments, "simulation_id")
             return self._benchmark(plan_id=plan_id, simulation_id=simulation_id)
+
+        if tool_name == "mars.release":
+            plan_id = _require_string(arguments, "plan_id")
+            simulation_id = _require_string(arguments, "simulation_id")
+            release_type = _require_string(arguments, "release_type")
+            version = _require_string(arguments, "version")
+            changed_doc_ids = _require_string_sequence(arguments, "changed_doc_ids")
+            summary = _require_string(arguments, "summary")
+            output_dir = _optional_string(arguments, "output_dir")
+            min_confidence = _optional_float(
+                arguments,
+                "min_confidence",
+                self.governance_gate.min_confidence,
+            )
+            return self._release(
+                plan_id=plan_id,
+                simulation_id=simulation_id,
+                release_type=release_type,
+                version=version,
+                changed_doc_ids=changed_doc_ids,
+                summary=summary,
+                output_dir=output_dir,
+                min_confidence=min_confidence,
+            )
 
         raise KeyError(f"Unsupported MCP tool: {tool_name}")
 
@@ -332,3 +396,68 @@ class MarsMCPAdapter:
         return {
             "benchmark": to_mcp_value(report),
         }
+
+    def _release(
+        self,
+        *,
+        plan_id: str,
+        simulation_id: str,
+        release_type: str,
+        version: str,
+        changed_doc_ids: tuple[str, ...],
+        summary: str,
+        output_dir: str | None,
+        min_confidence: float,
+    ) -> dict[str, MCPValue]:
+        plan = self._plans.get(plan_id)
+        if plan is None:
+            raise KeyError(f"Unknown plan_id: {plan_id}")
+
+        simulation = self._simulations.get(simulation_id)
+        if simulation is None:
+            raise KeyError(f"Unknown simulation_id: {simulation_id}")
+
+        if release_type not in {"quarterly", "hotfix"}:
+            raise ValueError("Argument 'release_type' must be either 'quarterly' or 'hotfix'")
+
+        workflow = GovernanceWorkflow(
+            governance_gate=GovernanceGate(min_confidence=min_confidence),
+            benchmark_harness=self.benchmark_harness,
+        )
+        bundle_dir = Path(output_dir) if output_dir is not None else None
+        audit_path = None
+        if bundle_dir is not None:
+            audit_path = bundle_dir / f"{version}-{release_type}-audit.json"
+
+        try:
+            if release_type == "quarterly":
+                result = workflow.finalize_quarterly(
+                    plan=plan,
+                    simulation=simulation,
+                    version=version,
+                    changed_doc_ids=changed_doc_ids,
+                    notes=summary,
+                    audit_path=audit_path,
+                )
+            else:
+                result = workflow.finalize_hotfix(
+                    plan=plan,
+                    simulation=simulation,
+                    version=version,
+                    changed_doc_ids=changed_doc_ids,
+                    reason=summary,
+                    audit_path=audit_path,
+                )
+        except ValueError as exc:
+            if audit_path is not None:
+                raise ValueError(f"{exc}. Audit trail exported to {audit_path}") from exc
+            raise
+
+        payload: dict[str, MCPValue] = {
+            "release": to_mcp_value(result),
+        }
+        if bundle_dir is not None:
+            payload["bundle_paths"] = to_mcp_value(
+                workflow.export_release_bundle(result, bundle_dir)
+            )
+        return payload
