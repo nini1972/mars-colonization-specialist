@@ -1,0 +1,78 @@
+{
+  "config": {
+    "concurrency": 24,
+    "mode": "both",
+    "persistence_backend": "sqlite",
+    "requests": 240,
+    "reset_runtime_state": true,
+    "sqlite_path": ".mars_mcp_runtime.soak.sqlite3",
+    "timeout_seconds": 20.0
+  },
+  "plan_runtime_metrics": {
+    "async_calls": 240.0,
+    "sync_calls": 240.0
+  },
+  "results": [
+    {
+      "concurrency": 24,
+      "degraded_count": 0,
+      "degraded_rate": 0.0,
+      "elapsed_seconds": 88.5186,
+      "error_rate": 0.0,
+      "error_types": {},
+      "failures": 0,
+      "latency_ms": {
+        "avg": 5283.8673,
+        "max": 18308.4374,
+        "p50": 4519.1977,
+        "p95": 11948.4198,
+        "p99": 15184.9003
+      },
+      "mode": "sync",
+      "requests": 240,
+      "runtime_counter_delta": {
+        "async_calls": 0.0,
+        "sync_calls": 240.0
+      },
+      "successes": 240,
+      "throughput_rps": 2.7113
+    },
+    {
+      "concurrency": 24,
+      "degraded_count": 0,
+      "degraded_rate": 0.0,
+      "elapsed_seconds": 272.2521,
+      "error_rate": 0.0,
+      "error_types": {},
+      "failures": 0,
+      "latency_ms": {
+        "avg": 15093.4518,
+        "max": 35032.3669,
+        "p50": 14537.4215,
+        "p95": 22809.4211,
+        "p99": 30107.5444
+      },
+      "mode": "async",
+      "requests": 240,
+      "runtime_counter_delta": {
+        "async_calls": 240.0,
+        "sync_calls": 0.0
+      },
+      "successes": 240,
+      "throughput_rps": 0.8815
+    }
+  ],
+  "schema_version": "1.0",
+  "telemetry_overview": {
+    "counts": {
+      "events": 960,
+      "failures": 0,
+      "successes": 480
+    },
+    "health": {
+      "latest_recorded_at": "2026-04-18T16:34:01.504+00:00",
+      "status": "healthy"
+    },
+    "schema_version": "1.0"
+  }
+}
