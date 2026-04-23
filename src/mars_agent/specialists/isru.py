@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from mars_agent.orchestration.negotiation_protocol import (
+    NegotiationEnvelope,
+    NegotiationMessageKind,
+    make_negotiation_envelopes,
+    proposal_from_payload,
+    proposal_payload,
+    review_payload,
+)
 from mars_agent.reasoning import (
     ForecastInput,
     ForecastRequest,
@@ -121,6 +129,53 @@ class ISRUSpecialist:
             if proposal.subsystem is not Subsystem.ISRU
         ]
         return tuple(reviews)
+
+    def handle_negotiation_envelope(
+        self,
+        envelope: NegotiationEnvelope,
+        participants: tuple[str, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[NegotiationEnvelope, ...]:
+        if envelope.recipient != Subsystem.ISRU.value:
+            return ()
+        if envelope.kind is NegotiationMessageKind.PROPOSAL_REQUESTED:
+            recipients = tuple(
+                sorted(
+                    {
+                        "planner",
+                        *(participant for participant in participants if participant != Subsystem.ISRU.value),
+                    }
+                )
+            )
+            outgoing: list[NegotiationEnvelope] = []
+            for proposal in self.propose_tradeoffs(conflict_ids):
+                outgoing.extend(
+                    make_negotiation_envelopes(
+                        template=envelope,
+                        sender=proposal.subsystem.value,
+                        recipients=recipients,
+                        kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+                        payload=proposal_payload(proposal),
+                    )
+                )
+            return tuple(outgoing)
+        if envelope.kind is not NegotiationMessageKind.PROPOSAL_SUBMITTED:
+            return ()
+        if envelope.sender == Subsystem.ISRU.value:
+            return ()
+        proposal = proposal_from_payload(envelope.payload)
+        outgoing: list[NegotiationEnvelope] = []
+        for review in self.review_peer_proposals((proposal,), conflict_ids):
+            outgoing.extend(
+                make_negotiation_envelopes(
+                    template=envelope,
+                    sender=review.reviewer_subsystem.value,
+                    recipients=("planner", review.proposal_subsystem.value),
+                    kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
+                    payload=review_payload(review),
+                )
+            )
+        return tuple(outgoing)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.ISRU:

@@ -19,7 +19,7 @@ The system currently consists of four domain specialists and five orchestrators.
 - `MissionPhaseStateMachine` — manages mission phase transitions
 - `GovernanceGate` — enforces safety and provenance hard gates
 
-Communication originally started as entirely synchronous direct function calls. The negotiation stack now has bounded internal message flow, but it still collapses into planner-owned execution rather than an open-ended peer-to-peer runtime.
+Communication originally started as entirely synchronous direct function calls. The negotiation stack now has deterministic internal routing, per-participant mailboxes, and bounded convergence rounds, but it still collapses into planner-supervised in-process execution rather than an open-ended peer-to-peer runtime.
 
 ## Key Gaps and Improvement Areas
 
@@ -139,3 +139,27 @@ Operational intent: keep sync and async planner performance comparable over time
   - counter-proposals do not trigger unbounded conversation loops
   - the final result still collapses into the existing planner and MCP contracts
 - A likely next step is selective re-review or convergence rules only when counter-proposals materially diverge from first-round proposals.
+
+### Latest Alignment Update (Phase 11 Step 6)
+
+- The planner-side proposal/review/counter collection helpers have been retired from the active negotiation path.
+- Internal message delivery now flows through deterministic runtime primitives:
+  - `NegotiationEnvelope`
+  - `NegotiationMailbox`
+  - `NegotiationRouter`
+  - `NegotiationRuntime`
+- `CentralPlanner` still opens and closes the session, but specialist-authored proposals, peer review routing, counter-proposal routing, and transcript recording now run through the dedicated in-process runtime layer instead of planner-owned collection loops.
+- This moved Step 6 from planner-mediated staging to a genuine internal routed runtime without changing `mars.plan`, MCP tool payloads, or dashboard contracts.
+
+### Latest Alignment Update (Phase 11 Step 7)
+
+- The negotiation runtime now performs bounded multi-round convergence instead of stopping after the first counter-proposal wave.
+- When a peer review emits a `COUNTER` with a suggested delta, the runtime materializes a counter-proposal, converts it into a revised proposal wave, and routes that revised proposal back through peer review.
+- Convergence is deterministic and bounded:
+  - the runtime stops when no new counter-proposals are emitted
+  - repeated revised proposal waves are not re-expanded indefinitely
+  - a small fixed review-round cap prevents unbounded loops even if future specialists add richer review logic
+- Result handling is unchanged externally:
+  - `MultiAgentNegotiator` still receives proposal/review/counter context through the existing parameters
+  - `_conflict_aware_fallback()` still operates on the same public data shapes
+  - the planner and MCP contracts remain stable while transcripts now show the extra converged proposal/review wave when applicable

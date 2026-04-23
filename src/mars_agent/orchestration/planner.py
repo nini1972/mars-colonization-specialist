@@ -33,6 +33,7 @@ from mars_agent.orchestration.negotiation_protocol import (
     NegotiationMessageKind,
     NegotiationSession,
 )
+from mars_agent.orchestration.negotiation_runtime import NegotiationRuntime
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
     NegotiationOutcome,
@@ -644,114 +645,6 @@ class CentralPlanner:
         )
         return new_isru_reduction, crew_delta, dust_delta, rationale
 
-    def _collect_specialist_proposals(
-        self,
-        conflicts: tuple[CrossDomainConflict, ...],
-    ) -> tuple[TradeoffProposal, ...]:
-        conflict_ids = tuple(sorted({conflict.conflict_id for conflict in conflicts}))
-        impacted = tuple(
-            sorted(
-                {
-                    subsystem
-                    for conflict in conflicts
-                    for subsystem in conflict.impacted_subsystems
-                },
-                key=lambda subsystem: subsystem.value,
-            )
-        )
-        proposals: list[TradeoffProposal] = []
-        for subsystem in impacted:
-            proposals.extend(self.registry.get(subsystem).propose_tradeoffs(conflict_ids))
-        return tuple(
-            sorted(
-                proposals,
-                key=lambda proposal: (
-                    proposal.subsystem.value,
-                    proposal.knob_name,
-                    proposal.suggested_delta,
-                    proposal.rationale,
-                ),
-            )
-        )
-
-    def _collect_peer_reviews(
-        self,
-        conflicts: tuple[CrossDomainConflict, ...],
-        proposals: tuple[TradeoffProposal, ...],
-    ) -> tuple[TradeoffReview, ...]:
-        if not proposals:
-            return ()
-
-        conflict_ids = tuple(sorted({conflict.conflict_id for conflict in conflicts}))
-        impacted = tuple(
-            sorted(
-                {
-                    subsystem
-                    for conflict in conflicts
-                    for subsystem in conflict.impacted_subsystems
-                },
-                key=lambda subsystem: subsystem.value,
-            )
-        )
-        reviews: list[TradeoffReview] = []
-        for subsystem in impacted:
-            reviews.extend(
-                self.registry.get(subsystem).review_peer_proposals(proposals, conflict_ids)
-            )
-        return tuple(
-            sorted(
-                reviews,
-                key=lambda review: (
-                    review.reviewer_subsystem.value,
-                    review.proposal_subsystem.value,
-                    review.knob_name,
-                    review.disposition.value,
-                    review.rationale,
-                ),
-            )
-        )
-
-    def _collect_counter_proposals(
-        self,
-        proposals: tuple[TradeoffProposal, ...],
-        reviews: tuple[TradeoffReview, ...],
-    ) -> tuple[TradeoffCounterProposal, ...]:
-        if not reviews:
-            return ()
-
-        proposal_conflict_ids = {
-            (proposal.subsystem, proposal.knob_name): proposal.conflict_ids
-            for proposal in proposals
-        }
-        counter_proposals = [
-            TradeoffCounterProposal(
-                reviewer_subsystem=review.reviewer_subsystem,
-                proposal_subsystem=review.proposal_subsystem,
-                knob_name=review.knob_name,
-                suggested_delta=review.suggested_delta,
-                rationale=review.rationale,
-                conflict_ids=proposal_conflict_ids.get(
-                    (review.proposal_subsystem, review.knob_name),
-                    (),
-                ),
-            )
-            for review in reviews
-            if review.disposition is TradeoffReviewDisposition.COUNTER
-            and review.suggested_delta is not None
-        ]
-        return tuple(
-            sorted(
-                counter_proposals,
-                key=lambda counter: (
-                    counter.reviewer_subsystem.value,
-                    counter.proposal_subsystem.value,
-                    counter.knob_name,
-                    counter.suggested_delta,
-                    counter.rationale,
-                ),
-            )
-        )
-
     def _publish_negotiation_session(
         self,
         *,
@@ -968,47 +861,15 @@ class CentralPlanner:
             history,
         )
         recipients = self._negotiation_recipients(conflicts)
-        proposals = self._collect_specialist_proposals(conflicts)
-        for proposal in proposals:
-            session.transcript.record(
-                sender=proposal.subsystem.value,
-                recipients=("planner",),
-                kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
-                payload={
-                    "knob_name": proposal.knob_name,
-                    "suggested_delta": proposal.suggested_delta,
-                    "rationale": proposal.rationale,
-                    "conflict_ids": list(proposal.conflict_ids),
-                },
-            )
-        reviews = self._collect_peer_reviews(conflicts, proposals)
-        for review in reviews:
-            session.transcript.record(
-                sender=review.reviewer_subsystem.value,
-                recipients=(review.proposal_subsystem.value, "planner"),
-                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
-                payload={
-                    "proposal_subsystem": review.proposal_subsystem.value,
-                    "knob_name": review.knob_name,
-                    "disposition": review.disposition.value,
-                    "rationale": review.rationale,
-                    "suggested_delta": review.suggested_delta,
-                },
-            )
-        counter_proposals = self._collect_counter_proposals(proposals, reviews)
-        for counter in counter_proposals:
-            session.transcript.record(
-                sender=counter.reviewer_subsystem.value,
-                recipients=(counter.proposal_subsystem.value, "planner"),
-                kind=NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
-                payload={
-                    "proposal_subsystem": counter.proposal_subsystem.value,
-                    "knob_name": counter.knob_name,
-                    "suggested_delta": counter.suggested_delta,
-                    "rationale": counter.rationale,
-                    "conflict_ids": list(counter.conflict_ids),
-                },
-            )
+        round_artifacts = NegotiationRuntime(
+            registry=self.registry,
+            session=session,
+            participants=recipients,
+            conflicts=conflicts,
+        ).execute()
+        proposals = round_artifacts.proposals
+        reviews = round_artifacts.reviews
+        counter_proposals = round_artifacts.counter_proposals
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:
@@ -1127,47 +988,15 @@ class CentralPlanner:
             history,
         )
         recipients = self._negotiation_recipients(conflicts)
-        proposals = self._collect_specialist_proposals(conflicts)
-        for proposal in proposals:
-            session.transcript.record(
-                sender=proposal.subsystem.value,
-                recipients=("planner",),
-                kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
-                payload={
-                    "knob_name": proposal.knob_name,
-                    "suggested_delta": proposal.suggested_delta,
-                    "rationale": proposal.rationale,
-                    "conflict_ids": list(proposal.conflict_ids),
-                },
-            )
-        reviews = self._collect_peer_reviews(conflicts, proposals)
-        for review in reviews:
-            session.transcript.record(
-                sender=review.reviewer_subsystem.value,
-                recipients=(review.proposal_subsystem.value, "planner"),
-                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
-                payload={
-                    "proposal_subsystem": review.proposal_subsystem.value,
-                    "knob_name": review.knob_name,
-                    "disposition": review.disposition.value,
-                    "rationale": review.rationale,
-                    "suggested_delta": review.suggested_delta,
-                },
-            )
-        counter_proposals = self._collect_counter_proposals(proposals, reviews)
-        for counter in counter_proposals:
-            session.transcript.record(
-                sender=counter.reviewer_subsystem.value,
-                recipients=(counter.proposal_subsystem.value, "planner"),
-                kind=NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
-                payload={
-                    "proposal_subsystem": counter.proposal_subsystem.value,
-                    "knob_name": counter.knob_name,
-                    "suggested_delta": counter.suggested_delta,
-                    "rationale": counter.rationale,
-                    "conflict_ids": list(counter.conflict_ids),
-                },
-            )
+        round_artifacts = NegotiationRuntime(
+            registry=self.registry,
+            session=session,
+            participants=recipients,
+            conflicts=conflicts,
+        ).execute()
+        proposals = round_artifacts.proposals
+        reviews = round_artifacts.reviews
+        counter_proposals = round_artifacts.counter_proposals
         fingerprint = _conflict_fingerprint(goal, conflicts, knowledge_context)
         cached = self.negotiation_store.lookup(fingerprint)
         if cached is not None and cached.accepted:

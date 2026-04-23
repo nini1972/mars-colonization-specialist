@@ -16,11 +16,13 @@ from mars_agent.orchestration.negotiation_protocol import (
     NegotiationMessageKind,
     NegotiationSession,
 )
+from mars_agent.orchestration.negotiation_runtime import NegotiationRuntime
 from mars_agent.orchestration.negotiation_store import (
     NegotiationMemoryStore,
     NegotiationOutcome,
     _conflict_fingerprint,
 )
+from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.specialists import Subsystem
 
@@ -127,6 +129,8 @@ def test_run_negotiation_session_records_fallback_transcript() -> None:
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.FALLBACK_APPLIED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
@@ -136,13 +140,13 @@ def test_run_negotiation_session_records_fallback_transcript() -> None:
         for message in session.transcript.messages
         if message.kind is NegotiationMessageKind.PROPOSAL_SUBMITTED
     ]
-    assert proposal_senders == ["isru", "power"]
+    assert proposal_senders == ["isru", "power", "isru"]
     review_senders = [
         message.sender
         for message in session.transcript.messages
         if message.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
     ]
-    assert review_senders == ["isru", "power"]
+    assert review_senders == ["isru", "power", "power"]
     counter_senders = [
         message.sender
         for message in session.transcript.messages
@@ -191,76 +195,68 @@ def test_run_negotiation_session_records_memory_replay_transcript() -> None:
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        NegotiationMessageKind.PROPOSAL_REVIEWED,
         NegotiationMessageKind.MEMORY_REPLAYED,
         NegotiationMessageKind.PROPOSAL_ACCEPTED,
         NegotiationMessageKind.SESSION_CLOSED,
     ]
 
 
-def test_collect_specialist_proposals_returns_deterministic_sorted_proposals() -> None:
-    planner = CentralPlanner()
-
-    proposals = planner._collect_specialist_proposals((_conflict(),))
-
-    assert [(proposal.subsystem.value, proposal.knob_name) for proposal in proposals] == [
-        ("isru", "isru_reduction_fraction"),
-        ("power", "dust_degradation_adjustment"),
-    ]
-
-
-def test_collect_peer_reviews_returns_deterministic_sorted_reviews() -> None:
-    planner = CentralPlanner()
-
-    reviews = planner._collect_peer_reviews(
-        (_conflict(),),
-        planner._collect_specialist_proposals((_conflict(),)),
+def test_runtime_returns_converged_proposals_and_reviews() -> None:
+    session = NegotiationSession.create(
+        mission_id="runtime-protocol-test",
+        round_index=0,
+        conflict_ids=("coupling.power_balance.shortfall",),
+        current_reduction=0.0,
+    )
+    runtime = NegotiationRuntime(
+        registry=SpecialistRegistry.default(),
+        session=session,
+        participants=("isru", "power"),
+        conflicts=(_conflict(),),
     )
 
+    artifacts = runtime.execute()
+
     assert [
-        (
-            review.reviewer_subsystem.value,
-            review.proposal_subsystem.value,
-            review.knob_name,
-            review.disposition.value,
-        )
-        for review in reviews
+        (proposal.subsystem.value, proposal.knob_name, proposal.suggested_delta)
+        for proposal in artifacts.proposals
     ] == [
-        ("isru", "power", "dust_degradation_adjustment", "acknowledge"),
-        ("power", "isru", "isru_reduction_fraction", "counter"),
+        ("isru", "isru_reduction_fraction", 0.1),
+        ("power", "dust_degradation_adjustment", 0.02),
     ]
-
-
-def test_collect_counter_proposals_materializes_counter_reviews() -> None:
-    planner = CentralPlanner()
-    proposals = planner._collect_specialist_proposals((_conflict(),))
-    reviews = planner._collect_peer_reviews((_conflict(),), proposals)
-
-    counter_proposals = planner._collect_counter_proposals(proposals, reviews)
-
+    assert [review.disposition.value for review in artifacts.reviews] == [
+        "acknowledge",
+        "counter",
+        "acknowledge",
+    ]
     assert [
-        (
-            counter.reviewer_subsystem.value,
-            counter.proposal_subsystem.value,
-            counter.knob_name,
-            counter.suggested_delta,
-        )
-        for counter in counter_proposals
-    ] == [("power", "isru", "isru_reduction_fraction", 0.1)]
+        counter.suggested_delta for counter in artifacts.counter_proposals
+    ] == [0.1]
 
 
 def test_counter_proposals_influence_conflict_aware_fallback() -> None:
     planner = CentralPlanner()
-    proposals = planner._collect_specialist_proposals((_conflict(),))
-    reviews = planner._collect_peer_reviews((_conflict(),), proposals)
-    counter_proposals = planner._collect_counter_proposals(proposals, reviews)
+    artifacts = NegotiationRuntime(
+        registry=planner.registry,
+        session=NegotiationSession.create(
+            mission_id="fallback-runtime-test",
+            round_index=0,
+            conflict_ids=("coupling.power_balance.shortfall",),
+            current_reduction=0.0,
+        ),
+        participants=("isru", "power"),
+        conflicts=(_conflict(),),
+    ).execute()
 
     reduction, crew_delta, dust_delta, rationale = planner._conflict_aware_fallback(
         (_conflict(),),
         0.0,
         _knowledge_context(),
-        proposals,
-        reviews,
-        counter_proposals,
+        artifacts.proposals,
+        artifacts.reviews,
+        artifacts.counter_proposals,
     )
 
     assert reduction >= 0.1
@@ -288,3 +284,5 @@ def test_negotiation_observer_receives_session_payload() -> None:
     assert isinstance(payload["messages"], list)
     assert isinstance(payload["proposals"], list)
     assert isinstance(payload["counter_proposals"], list)
+    proposals = payload["proposals"]
+    assert proposals[0]["suggested_delta"] == 0.1

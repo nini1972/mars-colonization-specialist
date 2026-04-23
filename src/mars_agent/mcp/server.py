@@ -223,6 +223,13 @@ class _SupportsCapabilitiesAndAnalyze(Protocol):
         conflict_ids: tuple[str, ...],
     ) -> tuple[TradeoffReview, ...]: ...
 
+    def handle_negotiation_envelope(
+        self,
+        envelope: NegotiationEnvelope,
+        participants: tuple[str, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[NegotiationEnvelope, ...]: ...
+
 
 class _FailingSpecialist:
     """Dev-only specialist wrapper that raises on analyze()."""
@@ -253,6 +260,18 @@ class _FailingSpecialist:
         conflict_ids: tuple[str, ...],
     ) -> tuple[TradeoffReview, ...]:
         return self._delegate.review_peer_proposals(proposals, conflict_ids)
+
+    def handle_negotiation_envelope(
+        self,
+        envelope: NegotiationEnvelope,
+        participants: tuple[str, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[NegotiationEnvelope, ...]:
+        return self._delegate.handle_negotiation_envelope(
+            envelope,
+            participants,
+            conflict_ids,
+        )
 
 
 def _apply_dev_failure_injection() -> None:

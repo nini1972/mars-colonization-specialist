@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, cast
 
+from mars_agent.orchestration.negotiation_protocol import NegotiationEnvelope
 from mars_agent.specialists.contracts import (
     ModuleRequest,
     ModuleResponse,
@@ -24,6 +25,12 @@ class _HasCapabilitiesAndAnalyze(Protocol):
         proposals: tuple[TradeoffProposal, ...],
         conflict_ids: tuple[str, ...],
     ) -> tuple[TradeoffReview, ...]: ...
+    def handle_negotiation_envelope(
+        self,
+        envelope: NegotiationEnvelope,
+        participants: tuple[str, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[NegotiationEnvelope, ...]: ...
 
 
 @dataclass

@@ -12,6 +12,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
 
+from mars_agent.specialists.contracts import (
+    Subsystem,
+    TradeoffCounterProposal,
+    TradeoffProposal,
+    TradeoffReview,
+    TradeoffReviewDisposition,
+)
+
 
 class NegotiationMessageKind(StrEnum):
     """Canonical message kinds emitted during a negotiation session."""
@@ -35,6 +43,15 @@ def _canonical_payload(payload: dict[str, object]) -> dict[str, object]:
     )
 
 
+def _envelope_sort_key(envelope: NegotiationEnvelope) -> tuple[int, str, str, str]:
+    return (
+        envelope.sequence,
+        envelope.recipient,
+        envelope.sender,
+        envelope.kind.value,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class NegotiationMessage:
     """One deterministic negotiation event within a session transcript."""
@@ -46,6 +63,126 @@ class NegotiationMessage:
     recipients: tuple[str, ...]
     kind: NegotiationMessageKind
     payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class NegotiationEnvelope:
+    """One routed negotiation envelope addressed to a single participant."""
+
+    session_id: str
+    round_id: str
+    sequence: int
+    sender: str
+    recipient: str
+    kind: NegotiationMessageKind
+    payload: dict[str, object]
+
+
+def make_negotiation_envelopes(
+    *,
+    template: NegotiationEnvelope,
+    sender: str,
+    recipients: tuple[str, ...],
+    kind: NegotiationMessageKind,
+    payload: dict[str, object],
+) -> tuple[NegotiationEnvelope, ...]:
+    canonical_payload = _canonical_payload(payload)
+    return tuple(
+        NegotiationEnvelope(
+            session_id=template.session_id,
+            round_id=template.round_id,
+            sequence=template.sequence,
+            sender=sender,
+            recipient=recipient,
+            kind=kind,
+            payload=canonical_payload,
+        )
+        for recipient in tuple(sorted(set(recipients)))
+    )
+
+
+def proposal_payload(proposal: TradeoffProposal) -> dict[str, object]:
+    return {
+        "subsystem": proposal.subsystem.value,
+        "knob_name": proposal.knob_name,
+        "suggested_delta": proposal.suggested_delta,
+        "rationale": proposal.rationale,
+        "conflict_ids": list(proposal.conflict_ids),
+    }
+
+
+def proposal_from_payload(payload: dict[str, object]) -> TradeoffProposal:
+    subsystem = Subsystem(str(payload["subsystem"]))
+    conflict_ids = payload.get("conflict_ids", ())
+    if isinstance(conflict_ids, (list, tuple)):
+        normalized_conflicts = tuple(str(conflict_id) for conflict_id in conflict_ids)
+    else:
+        normalized_conflicts = ()
+    suggested_delta_raw = payload["suggested_delta"]
+    if not isinstance(suggested_delta_raw, (int, float)):
+        raise ValueError("proposal payload suggested_delta must be numeric")
+    return TradeoffProposal(
+        subsystem=subsystem,
+        knob_name=str(payload["knob_name"]),
+        suggested_delta=float(suggested_delta_raw),
+        rationale=str(payload["rationale"]),
+        conflict_ids=normalized_conflicts,
+    )
+
+
+def review_payload(review: TradeoffReview) -> dict[str, object]:
+    return {
+        "reviewer_subsystem": review.reviewer_subsystem.value,
+        "proposal_subsystem": review.proposal_subsystem.value,
+        "knob_name": review.knob_name,
+        "disposition": review.disposition.value,
+        "rationale": review.rationale,
+        "suggested_delta": review.suggested_delta,
+    }
+
+
+def review_from_payload(payload: dict[str, object]) -> TradeoffReview:
+    suggested_delta_raw = payload.get("suggested_delta")
+    if suggested_delta_raw is not None and not isinstance(suggested_delta_raw, (int, float)):
+        raise ValueError("review payload suggested_delta must be numeric or null")
+    return TradeoffReview(
+        reviewer_subsystem=Subsystem(str(payload["reviewer_subsystem"])),
+        proposal_subsystem=Subsystem(str(payload["proposal_subsystem"])),
+        knob_name=str(payload["knob_name"]),
+        disposition=TradeoffReviewDisposition(str(payload["disposition"])),
+        rationale=str(payload["rationale"]),
+        suggested_delta=(
+            float(suggested_delta_raw) if suggested_delta_raw is not None else None
+        ),
+    )
+
+
+def counter_payload(counter: TradeoffCounterProposal) -> dict[str, object]:
+    return {
+        "reviewer_subsystem": counter.reviewer_subsystem.value,
+        "proposal_subsystem": counter.proposal_subsystem.value,
+        "knob_name": counter.knob_name,
+        "suggested_delta": counter.suggested_delta,
+        "rationale": counter.rationale,
+        "conflict_ids": list(counter.conflict_ids),
+    }
+
+
+@dataclass(slots=True)
+class NegotiationMailbox:
+    """Deterministic in-memory queue for one participant."""
+
+    recipient: str
+    pending: list[NegotiationEnvelope] = field(default_factory=list)
+
+    def enqueue(self, envelope: NegotiationEnvelope) -> None:
+        self.pending.append(envelope)
+        self.pending.sort(key=_envelope_sort_key)
+
+    def drain(self) -> tuple[NegotiationEnvelope, ...]:
+        drained = tuple(self.pending)
+        self.pending.clear()
+        return drained
 
 
 @dataclass(slots=True)
