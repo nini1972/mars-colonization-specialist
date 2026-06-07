@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from mcp.server.fastmcp.exceptions import ToolError
@@ -920,6 +920,11 @@ def dashboard_page(
             "degraded": bool(replay.get("persistence_degraded", False)),
         },
     )
+
+
+@app.get("/")
+def root_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/dashboard", status_code=307)
 
 
 @app.get("/api/telemetry/dashboard")
