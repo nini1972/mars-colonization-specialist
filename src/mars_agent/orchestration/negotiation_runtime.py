@@ -211,6 +211,10 @@ class NegotiationRuntime:
         }
 
     @staticmethod
+    def _review_from_payload(payload: dict[str, object]) -> TradeoffReview:
+        return review_from_payload(payload)
+
+    @staticmethod
     def _counter_payload(counter: TradeoffCounterProposal) -> dict[str, object]:
         return {
             "reviewer_subsystem": counter.reviewer_subsystem.value,
@@ -293,7 +297,7 @@ class NegotiationRuntime:
                     out_env.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
                     and out_env.recipient == "planner"
                 ):
-                    review = review_from_payload(out_env.payload)
+                    review = self._review_from_payload(out_env.payload)
                     raw_reviews.append(review)
         return tuple(sorted(raw_reviews, key=_review_sort_key))
 
