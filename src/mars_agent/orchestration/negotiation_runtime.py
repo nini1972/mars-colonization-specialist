@@ -295,6 +295,9 @@ class NegotiationRuntime:
             ):
                 if out_env.kind is not NegotiationMessageKind.PROPOSAL_REVIEWED:
                     continue
+                # record=False: these internal dispatches are re-sent with the
+                # full recipient list by _route_reviews, which records them once
+                # in the transcript.  Recording here would create duplicates.
                 self.router.send(
                     sender=out_env.sender,
                     recipients=(out_env.recipient,),
