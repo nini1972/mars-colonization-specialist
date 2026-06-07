@@ -12,6 +12,7 @@ from mars_agent.orchestration.negotiation_protocol import (
     NegotiationMailbox,
     NegotiationMessageKind,
     NegotiationSession,
+    review_from_payload,
 )
 from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.specialists import Subsystem
@@ -249,15 +250,12 @@ class NegotiationRuntime:
                 self.participants,
                 self.conflict_ids,
             ):
-                if out_env.kind is NegotiationMessageKind.PROPOSAL_SUBMITTED:
+                if (
+                    out_env.kind is NegotiationMessageKind.PROPOSAL_SUBMITTED
+                    and out_env.recipient == "planner"
+                ):
                     proposal = self._proposal_from_payload(out_env.payload)
                     raw_proposals.append(proposal)
-                self.router.send(
-                    sender=out_env.sender,
-                    recipients=(out_env.recipient,),
-                    kind=out_env.kind,
-                    payload=out_env.payload,
-                )
         return tuple(sorted(raw_proposals, key=_proposal_sort_key))
 
     def _route_proposals(self, proposals: tuple[TradeoffProposal, ...]) -> None:
@@ -291,15 +289,12 @@ class NegotiationRuntime:
                 self.participants,
                 self.conflict_ids,
             ):
-                if out_env.kind is NegotiationMessageKind.PROPOSAL_REVIEWED:
-                    review = self._review_from_payload(out_env.payload)
+                if (
+                    out_env.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
+                    and out_env.recipient == "planner"
+                ):
+                    review = review_from_payload(out_env.payload)
                     raw_reviews.append(review)
-                self.router.send(
-                    sender=out_env.sender,
-                    recipients=(out_env.recipient,),
-                    kind=out_env.kind,
-                    payload=out_env.payload,
-                )
         return tuple(sorted(raw_reviews, key=_review_sort_key))
 
     def _route_reviews(self, reviews: tuple[TradeoffReview, ...]) -> None:

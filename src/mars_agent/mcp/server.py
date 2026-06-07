@@ -41,6 +41,7 @@ from mars_agent.mcp.persistence import (
 from mars_agent.mcp.telemetry import TelemetryQueryService
 from mars_agent.orchestration import MissionGoal
 from mars_agent.orchestration.models import PlanResult, SpecialistTiming
+from mars_agent.orchestration.negotiation_protocol import NegotiationEnvelope
 from mars_agent.orchestration.registry import SpecialistRegistry
 from mars_agent.reasoning.models import EvidenceReference
 from mars_agent.simulation import SimulationPipeline
