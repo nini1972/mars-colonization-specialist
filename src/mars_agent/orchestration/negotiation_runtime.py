@@ -293,6 +293,13 @@ class NegotiationRuntime:
                 self.participants,
                 self.conflict_ids,
             ):
+                self.router.send(
+                    sender=out_env.sender,
+                    recipients=(out_env.recipient,),
+                    kind=out_env.kind,
+                    payload=out_env.payload,
+                    record=False,
+                )
                 if (
                     out_env.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
                     and out_env.recipient == "planner"
