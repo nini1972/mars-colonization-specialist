@@ -261,7 +261,7 @@ def test_route_proposals_delivers_to_non_planner_participants() -> None:
     proposal_recipients = {
         env.recipient
         for env in drained
-        if env.kind is NegotiationMessageKind.PROPOSAL_SUBMITTED
+        if env.kind == NegotiationMessageKind.PROPOSAL_SUBMITTED
     }
     assert "isru" in proposal_recipients, "ISRU should receive proposals via _route_proposals"
     assert "power" in proposal_recipients, "POWER should receive proposals via _route_proposals"
@@ -334,7 +334,7 @@ def test_route_reviews_delivers_to_proposal_authors() -> None:
     review_recipients = {
         env.recipient
         for env in drained
-        if env.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
+        if env.kind == NegotiationMessageKind.PROPOSAL_REVIEWED
     }
     assert "isru" in review_recipients, "ISRU (proposal author) should receive review via routing"
     assert "power" in review_recipients, "POWER (proposal author) should receive review via routing"
