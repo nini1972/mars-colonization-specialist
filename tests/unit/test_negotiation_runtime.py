@@ -499,3 +499,74 @@ def test_non_planner_reviews_routed_correctly_via_route_reviews_stubbed_mailbox(
         and envelope.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
     ]
     assert planner_reviews, "review must be routed to planner via _route_reviews"
+
+
+def test_collect_reviews_only_routes_proposal_reviewed_envelopes() -> None:
+    """_collect_reviews should not route non-review envelope kinds."""
+
+    class _StubReviewerWithCounter(_StubReviewer):
+        def handle_negotiation_envelope(
+            self,
+            envelope: NegotiationEnvelope,
+            participants: tuple[str, ...],
+            conflict_ids: tuple[str, ...],
+        ) -> tuple[NegotiationEnvelope, ...]:
+            review_envelopes = super().handle_negotiation_envelope(
+                envelope,
+                participants,
+                conflict_ids,
+            )
+            counter_payload: dict[str, object] = {
+                "reviewer_subsystem": self._subsystem.value,
+                "proposal_subsystem": "isru",
+                "knob_name": "isru_reduction_fraction",
+                "suggested_delta": 0.05,
+                "rationale": "stub-counter",
+                "conflict_ids": ["coupling.power_balance.shortfall"],
+            }
+            counter_envelope = NegotiationEnvelope(
+                session_id=envelope.session_id,
+                round_id=envelope.round_id,
+                sequence=envelope.sequence,
+                sender=self._subsystem.value,
+                recipient="planner",
+                kind=NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED,
+                payload=counter_payload,
+            )
+            return (*review_envelopes, counter_envelope)
+
+    session = NegotiationSession.create(
+        mission_id="collect-reviews-kind-filter-test",
+        round_index=0,
+        conflict_ids=("coupling.power_balance.shortfall",),
+        current_reduction=0.0,
+    )
+    router = NegotiationRouter(session=session)
+    router.send(
+        sender="isru",
+        recipients=("power",),
+        kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        payload=_proposal_submitted_payload(),
+        record=False,
+    )
+
+    registry = SpecialistRegistry()
+    registry.register(cast(Any, _StubReviewerWithCounter(Subsystem.POWER)))
+
+    runtime = NegotiationRuntime(
+        registry=registry,
+        session=session,
+        participants=("isru", "power"),
+        conflicts=(_conflict(),),
+    )
+    runtime.router = router
+
+    reviews = runtime._collect_reviews()
+    assert len(reviews) == 1
+
+    routed = runtime.router.drain()
+    assert routed
+    assert all(envelope.kind is NegotiationMessageKind.PROPOSAL_REVIEWED for envelope in routed)
+    assert not any(
+        envelope.kind is NegotiationMessageKind.COUNTER_PROPOSAL_SUBMITTED for envelope in routed
+    )

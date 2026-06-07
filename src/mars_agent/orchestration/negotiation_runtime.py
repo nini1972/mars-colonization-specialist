@@ -293,6 +293,8 @@ class NegotiationRuntime:
                 self.participants,
                 self.conflict_ids,
             ):
+                if out_env.kind is not NegotiationMessageKind.PROPOSAL_REVIEWED:
+                    continue
                 self.router.send(
                     sender=out_env.sender,
                     recipients=(out_env.recipient,),
