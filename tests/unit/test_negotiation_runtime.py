@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from mars_agent.orchestration import ConflictSeverity, CrossDomainConflict, MitigationOption
 from mars_agent.orchestration.negotiation_protocol import (
     NegotiationEnvelope,
@@ -96,6 +98,78 @@ class _StubSpecialist:
                 payload=payload,
             ),
         )
+
+
+class _StubReviewer:
+    """Minimal stub specialist that emits planner and non-planner review envelopes."""
+
+    def __init__(self, subsystem: Subsystem) -> None:
+        self._subsystem = subsystem
+
+    def capabilities(self) -> SpecialistCapability:
+        return SpecialistCapability(
+            subsystem=self._subsystem,
+            accepts_inputs=(),
+            produces_metrics=(),
+            tradeoff_knobs=(),
+        )
+
+    def propose_tradeoffs(self, conflict_ids: tuple[str, ...]) -> tuple[TradeoffProposal, ...]:
+        return ()
+
+    def review_peer_proposals(
+        self,
+        proposals: tuple[TradeoffProposal, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[TradeoffReview, ...]:
+        return ()
+
+    def handle_negotiation_envelope(
+        self,
+        envelope: NegotiationEnvelope,
+        participants: tuple[str, ...],
+        conflict_ids: tuple[str, ...],
+    ) -> tuple[NegotiationEnvelope, ...]:
+        if envelope.kind is not NegotiationMessageKind.PROPOSAL_SUBMITTED:
+            return ()
+        payload: dict[str, object] = {
+            "reviewer_subsystem": self._subsystem.value,
+            "proposal_subsystem": "isru",
+            "knob_name": "isru_reduction_fraction",
+            "disposition": "acknowledge",
+            "rationale": "stub-review",
+            "suggested_delta": None,
+        }
+        return (
+            NegotiationEnvelope(
+                session_id=envelope.session_id,
+                round_id=envelope.round_id,
+                sequence=envelope.sequence,
+                sender=self._subsystem.value,
+                recipient="planner",
+                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
+                payload=payload,
+            ),
+            NegotiationEnvelope(
+                session_id=envelope.session_id,
+                round_id=envelope.round_id,
+                sequence=envelope.sequence,
+                sender=self._subsystem.value,
+                recipient="isru",
+                kind=NegotiationMessageKind.PROPOSAL_REVIEWED,
+                payload=payload,
+            ),
+        )
+
+
+def _proposal_submitted_payload() -> dict[str, object]:
+    return {
+        "subsystem": "isru",
+        "knob_name": "isru_reduction_fraction",
+        "suggested_delta": 0.1,
+        "rationale": "reduce power draw",
+        "conflict_ids": ["coupling.power_balance.shortfall"],
+    }
 
 
 def test_router_drains_mailboxes_in_deterministic_order() -> None:
@@ -338,3 +412,90 @@ def test_route_reviews_delivers_to_proposal_authors() -> None:
     }
     assert "isru" in review_recipients, "ISRU (proposal author) should receive review via routing"
     assert "power" in review_recipients, "POWER (proposal author) should receive review via routing"
+
+
+def test_collect_reviews_only_aggregates_planner_addressed_envelopes_stubbed_mailbox() -> None:
+    """Stubbed review envelopes are aggregated only when addressed to planner."""
+    session = NegotiationSession.create(
+        mission_id="collect-reviews-filter-test",
+        round_index=0,
+        conflict_ids=("coupling.power_balance.shortfall",),
+        current_reduction=0.0,
+    )
+    router = NegotiationRouter(session=session)
+    router.send(
+        sender="isru",
+        recipients=("power",),
+        kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        payload=_proposal_submitted_payload(),
+        record=False,
+    )
+
+    registry = SpecialistRegistry()
+    registry.register(cast(Any, _StubReviewer(Subsystem.POWER)))
+
+    runtime = NegotiationRuntime(
+        registry=registry,
+        session=session,
+        participants=("isru", "power"),
+        conflicts=(_conflict(),),
+    )
+    runtime.router = router
+
+    reviews = runtime._collect_reviews()
+
+    assert len(reviews) == 1
+    assert reviews[0].reviewer_subsystem == Subsystem.POWER
+    assert reviews[0].proposal_subsystem == Subsystem.ISRU
+
+
+def test_non_planner_reviews_routed_correctly_via_route_reviews_stubbed_mailbox() -> None:
+    """Stubbed non-planner reviews are delivered by _route_reviews."""
+    session = NegotiationSession.create(
+        mission_id="collect-reviews-routing-test",
+        round_index=0,
+        conflict_ids=("coupling.power_balance.shortfall",),
+        current_reduction=0.0,
+    )
+    router = NegotiationRouter(session=session)
+    router.send(
+        sender="isru",
+        recipients=("power",),
+        kind=NegotiationMessageKind.PROPOSAL_SUBMITTED,
+        payload=_proposal_submitted_payload(),
+        record=False,
+    )
+
+    registry = SpecialistRegistry()
+    registry.register(cast(Any, _StubReviewer(Subsystem.POWER)))
+
+    runtime = NegotiationRuntime(
+        registry=registry,
+        session=session,
+        participants=("isru", "power"),
+        conflicts=(_conflict(),),
+    )
+    runtime.router = router
+
+    reviews = runtime._collect_reviews()
+    assert reviews, "at least one review must be collected before routing"
+
+    runtime._route_reviews(reviews)
+
+    routed = runtime.router.drain()
+
+    isru_reviews = [
+        envelope
+        for envelope in routed
+        if envelope.recipient == "isru"
+        and envelope.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
+    ]
+    assert isru_reviews, "review must be routed to the proposal subsystem (isru) via _route_reviews"
+
+    planner_reviews = [
+        envelope
+        for envelope in routed
+        if envelope.recipient == "planner"
+        and envelope.kind is NegotiationMessageKind.PROPOSAL_REVIEWED
+    ]
+    assert planner_reviews, "review must be routed to planner via _route_reviews"
