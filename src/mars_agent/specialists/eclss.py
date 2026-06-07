@@ -137,13 +137,17 @@ class ECLSSSpecialist:
                 sorted(
                     {
                         "planner",
-                        *(participant for participant in participants if participant != Subsystem.ECLSS.value),
+                        *(
+                            participant
+                            for participant in participants
+                            if participant != Subsystem.ECLSS.value
+                        ),
                     }
                 )
             )
-            outgoing: list[NegotiationEnvelope] = []
+            proposal_outgoing: list[NegotiationEnvelope] = []
             for proposal in self.propose_tradeoffs(conflict_ids):
-                outgoing.extend(
+                proposal_outgoing.extend(
                     make_negotiation_envelopes(
                         template=envelope,
                         sender=proposal.subsystem.value,
@@ -152,15 +156,15 @@ class ECLSSSpecialist:
                         payload=proposal_payload(proposal),
                     )
                 )
-            return tuple(outgoing)
+            return tuple(proposal_outgoing)
         if envelope.kind is not NegotiationMessageKind.PROPOSAL_SUBMITTED:
             return ()
         if envelope.sender == Subsystem.ECLSS.value:
             return ()
         proposal = proposal_from_payload(envelope.payload)
-        outgoing: list[NegotiationEnvelope] = []
+        review_outgoing: list[NegotiationEnvelope] = []
         for review in self.review_peer_proposals((proposal,), conflict_ids):
-            outgoing.extend(
+            review_outgoing.extend(
                 make_negotiation_envelopes(
                     template=envelope,
                     sender=review.reviewer_subsystem.value,
@@ -169,7 +173,7 @@ class ECLSSSpecialist:
                     payload=review_payload(review),
                 )
             )
-        return tuple(outgoing)
+        return tuple(review_outgoing)
 
     def analyze(self, request: ModuleRequest) -> ModuleResponse:
         if request.subsystem is not Subsystem.ECLSS:

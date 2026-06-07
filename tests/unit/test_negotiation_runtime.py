@@ -91,12 +91,13 @@ def test_runtime_converges_counter_proposals_into_revised_round() -> None:
             review.proposal_subsystem.value,
             review.knob_name,
             review.disposition.value,
+            review.suggested_delta,
         )
         for review in artifacts.reviews
     ] == [
-        ("isru", "power", "dust_degradation_adjustment", "acknowledge"),
-        ("power", "isru", "isru_reduction_fraction", "counter"),
-        ("power", "isru", "isru_reduction_fraction", "acknowledge"),
+        ("isru", "power", "dust_degradation_adjustment", "acknowledge", None),
+        ("power", "isru", "isru_reduction_fraction", "counter", 0.1),
+        ("power", "isru", "isru_reduction_fraction", "acknowledge", None),
     ]
     assert [
         (
