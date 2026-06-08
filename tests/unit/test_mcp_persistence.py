@@ -42,6 +42,8 @@ def _snapshot() -> PersistenceSnapshot:
                 "total_latency_ms": 123.45,
             }
         },
+        telemetry_events=[],
+        negotiation_sessions=[],
     )
 
 

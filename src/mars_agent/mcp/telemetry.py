@@ -322,3 +322,18 @@ class TelemetryQueryService:
             },
             "replay_degraded_panel": replay_and_degraded,
         }
+
+    def get_state(self) -> tuple[list[TelemetryEventPayload], list[dict[str, object]]]:
+        """Return the current state of telemetry events and negotiation sessions as lists."""
+        return list(self._events), list(self._negotiation_sessions)
+
+    def restore_state(
+        self,
+        events: list[TelemetryEventPayload],
+        negotiation_sessions: list[dict[str, object]],
+    ) -> None:
+        """Restore telemetry events and negotiation sessions from persisted lists."""
+        self._events.clear()
+        self._events.extend(events)
+        self._negotiation_sessions.clear()
+        self._negotiation_sessions.extend(negotiation_sessions)

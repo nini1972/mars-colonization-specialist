@@ -38,7 +38,7 @@ from mars_agent.mcp.persistence import (
     PersistenceUnavailableError,
     SQLitePersistenceBackend,
 )
-from mars_agent.mcp.telemetry import TelemetryQueryService
+from mars_agent.mcp.telemetry import TelemetryEventPayload, TelemetryQueryService
 from mars_agent.orchestration import MissionGoal
 from mars_agent.orchestration.models import PlanResult, SpecialistTiming
 from mars_agent.orchestration.negotiation_protocol import NegotiationEnvelope
@@ -406,6 +406,7 @@ def _allow_corruption_fallback() -> bool:
 
 
 def _runtime_snapshot() -> PersistenceSnapshot:
+    events, sessions = _TELEMETRY.get_state()
     return PersistenceSnapshot(
         completed_requests={
             request_id: IdempotencyEntry(
@@ -420,6 +421,8 @@ def _runtime_snapshot() -> PersistenceSnapshot:
         plan_correlation_by_id=dict(_PLAN_CORRELATION_BY_ID),
         simulation_correlation_by_id=dict(_SIMULATION_CORRELATION_BY_ID),
         metrics_by_tool=deepcopy(_TOOL_METRICS),
+        telemetry_events=events,
+        negotiation_sessions=sessions,
     )
 
 
@@ -434,6 +437,10 @@ def _restore_runtime_snapshot(snapshot: PersistenceSnapshot) -> None:
     _SIMULATION_CORRELATION_BY_ID.update(snapshot.simulation_correlation_by_id)
     _TOOL_METRICS.clear()
     _TOOL_METRICS.update(deepcopy(snapshot.metrics_by_tool))
+    _TELEMETRY.restore_state(
+        cast(list[TelemetryEventPayload], snapshot.telemetry_events),
+        snapshot.negotiation_sessions,
+    )
 
 
 def _persist_runtime_snapshot_best_effort() -> None:
@@ -691,6 +698,7 @@ def _record_specialist_metric(timing: SpecialistTiming) -> None:
 
 def _record_negotiation_session(payload: Mapping[str, object]) -> None:
     _TELEMETRY.record_negotiation_session(payload)
+    _persist_runtime_snapshot_best_effort()
 
 
 _adapter.planner.negotiation_observer = _record_negotiation_session

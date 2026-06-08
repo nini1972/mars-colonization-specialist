@@ -30,6 +30,8 @@ class PersistenceSnapshot:
     plan_correlation_by_id: dict[str, str]
     simulation_correlation_by_id: dict[str, str]
     metrics_by_tool: dict[str, dict[str, float]]
+    telemetry_events: list[dict[str, object]]
+    negotiation_sessions: list[dict[str, object]]
 
 
 class PersistenceUnavailableError(RuntimeError):
@@ -117,6 +119,22 @@ class SQLitePersistenceBackend:
                         metric_key TEXT NOT NULL,
                         metric_value REAL NOT NULL,
                         PRIMARY KEY (tool_name, metric_key)
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS telemetry_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        payload_json TEXT NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS negotiation_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        payload_json TEXT NOT NULL
                     )
                     """
                 )
@@ -212,12 +230,34 @@ class SQLitePersistenceBackend:
                     metric_value = float(row["metric_value"])
                     metrics_by_tool.setdefault(tool_name, {})[metric_key] = metric_value
 
+                telemetry_events: list[dict[str, object]] = []
+                for row in cursor.execute(
+                    """
+                    SELECT payload_json
+                    FROM telemetry_events
+                    ORDER BY id ASC
+                    """
+                ):
+                    telemetry_events.append(json.loads(str(row["payload_json"])))
+
+                negotiation_sessions: list[dict[str, object]] = []
+                for row in cursor.execute(
+                    """
+                    SELECT payload_json
+                    FROM negotiation_sessions
+                    ORDER BY id ASC
+                    """
+                ):
+                    negotiation_sessions.append(json.loads(str(row["payload_json"])))
+
                 return PersistenceSnapshot(
                     completed_requests=completed_requests,
                     in_flight_requests=in_flight_requests,
                     plan_correlation_by_id=plan_correlation_by_id,
                     simulation_correlation_by_id=simulation_correlation_by_id,
                     metrics_by_tool=metrics_by_tool,
+                    telemetry_events=telemetry_events,
+                    negotiation_sessions=negotiation_sessions,
                 )
         except sqlite3.Error as exc:
             raise self._translate_sqlite_error(exc) from exc
@@ -233,6 +273,8 @@ class SQLitePersistenceBackend:
                 cursor.execute("DELETE FROM plan_correlations")
                 cursor.execute("DELETE FROM simulation_correlations")
                 cursor.execute("DELETE FROM tool_metrics")
+                cursor.execute("DELETE FROM telemetry_events")
+                cursor.execute("DELETE FROM negotiation_sessions")
 
                 for request_id in sorted(snapshot.completed_requests):
                     entry = snapshot.completed_requests[request_id]
@@ -298,6 +340,24 @@ class SQLitePersistenceBackend:
                             """,
                             (tool_name, metric_key, metrics[metric_key]),
                         )
+
+                for event in snapshot.telemetry_events:
+                    cursor.execute(
+                        """
+                        INSERT INTO telemetry_events (payload_json)
+                        VALUES (?)
+                        """,
+                        (json.dumps(event, sort_keys=True, separators=(",", ":")),),
+                    )
+
+                for session in snapshot.negotiation_sessions:
+                    cursor.execute(
+                        """
+                        INSERT INTO negotiation_sessions (payload_json)
+                        VALUES (?)
+                        """,
+                        (json.dumps(session, sort_keys=True, separators=(",", ":")),),
+                    )
         except sqlite3.Error as exc:
             raise self._translate_sqlite_error(exc) from exc
 
