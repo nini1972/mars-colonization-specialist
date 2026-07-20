@@ -1,6 +1,5 @@
 
-<video src="https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/video%20(2).mp4" width="640" controls>
- </video>
+https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/video%20(2).mp4
 
 # Mars Colonization Preparation Specialist
 
