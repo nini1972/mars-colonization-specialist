@@ -28,7 +28,7 @@ Phase 10a implements the first increment of **Option C: Multi-Agent Orchestratio
 ## Next increments (Phase 10b options)
 
 - [x] Expand negotiation variables beyond ISRU feedstock (crew_size + dust_degradation_fraction; 104 tests passing)
-- [ ] Add async negotiation support (\AsyncOpenAI\) for non-blocking planning
+- [x] Add async negotiation support (\AsyncOpenAI\) for non-blocking planning
 - [x] Provide negotiation history to the LLM for multi-turn context
 - [x] Add unit tests exercising the LLM path with a mocked OpenAI client
-- [ ] Explore Option D: cloud infrastructure (Dockerfile, health endpoints, deployment scripts)
+- [x] Explore Option D: cloud infrastructure (Dockerfile, health endpoints, deployment scripts)
