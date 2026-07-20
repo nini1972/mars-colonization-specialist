@@ -1,5 +1,5 @@
 
-[![Watch the showcase video](assets\target_repos\mars-colonization-agent\scene_2_496e78240180b1f4.png)](assets\target_repos\mars-colonization-agent\final_movie.mp4)
+[![Watch the showcase video](https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/scene_1_d37c7a6dd7a5a5b3.png#:~:text=assets-,scene_1_d37c7a6dd7a5a5b3,-.png)]()
 
 
 # Mars Colonization Preparation Specialist
