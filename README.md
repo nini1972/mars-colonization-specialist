@@ -2,6 +2,9 @@
 [![Watch the showcase video](https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/scene_1_d37c7a6dd7a5a5b3.png#:~:text=assets-,scene_1_d37c7a6dd7a5a5b3,-.png)](https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/video%20(2).mp4)
 
 
+<video src="https://github.com/nini1972/mars-colonization-specialist/blob/main/assets/video%20(2).mp4" width="640" controls>
+ </video>
+
 # Mars Colonization Preparation Specialist
 
 Phases 0-7 baseline for deterministic, testable implementation.
