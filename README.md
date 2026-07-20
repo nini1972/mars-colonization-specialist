@@ -1,3 +1,7 @@
+
+[![Watch the showcase video](assets\target_repos\mars-colonization-agent\scene_2_496e78240180b1f4.png)](assets\target_repos\mars-colonization-agent\final_movie.mp4)
+
+
 # Mars Colonization Preparation Specialist
 
 Phases 0-7 baseline for deterministic, testable implementation.
