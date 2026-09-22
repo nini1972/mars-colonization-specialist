@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
 import dataclasses
 import logging
@@ -11,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
 from typing import Protocol
+
+import anyio
 
 from mars_agent.knowledge.models import SearchQuery, TrustTier
 from mars_agent.knowledge.ontology import OntologyStore
@@ -1060,7 +1061,7 @@ class CentralPlanner:
             )
             if rationale in {"Negotiator error; see logs.", "Empty response from LLM."}:
                 accepted, new_reduction, crew_reduction, dust_adj, rationale = (
-                    await asyncio.to_thread(
+                    await anyio.to_thread.run_sync(
                         self.negotiator.negotiate,
                         goal,
                         conflicts,
@@ -1075,7 +1076,7 @@ class CentralPlanner:
                 )
         else:
             accepted, new_reduction, crew_reduction, dust_adj, rationale = (
-                await asyncio.to_thread(
+                await anyio.to_thread.run_sync(
                     self.negotiator.negotiate,
                     goal,
                     conflicts,
@@ -1346,7 +1347,7 @@ class CentralPlanner:
                 isru_response,
                 power_response,
                 thermal_response,
-            ), last_timings = await asyncio.to_thread(
+            ), last_timings = await anyio.to_thread.run_sync(
                 self._run_modules,
                 goal,
                 evidence,
