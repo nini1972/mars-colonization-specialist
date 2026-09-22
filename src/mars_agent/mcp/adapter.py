@@ -50,8 +50,8 @@ def to_mcp_value(value: object) -> MCPValue:
         raise TypeError(f"Unsupported enum value type: {type(enum_value).__name__}")
     if isinstance(value, (date, datetime)):
         return value.isoformat()
-    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
-        return to_mcp_value(getattr(value, "model_dump")())
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        return to_mcp_value(value.model_dump())
     if is_dataclass(value):
         return {
             item.name: to_mcp_value(getattr(value, item.name))

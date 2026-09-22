@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
 from typing import TYPE_CHECKING
 
 from mars_agent.orchestration.models import PlanResult

@@ -422,7 +422,7 @@ def _runtime_snapshot() -> PersistenceSnapshot:
         plan_correlation_by_id=dict(_PLAN_CORRELATION_BY_ID),
         simulation_correlation_by_id=dict(_SIMULATION_CORRELATION_BY_ID),
         metrics_by_tool=deepcopy(_TOOL_METRICS),
-        telemetry_events=events,
+        telemetry_events=cast(list[dict[str, object]], events),
         negotiation_sessions=sessions,
     )
 

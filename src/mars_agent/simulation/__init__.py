@@ -12,8 +12,10 @@ from mars_agent.simulation.aressim import (
     PowerGridControls,
     PowerGridState,
     SimulationMetadata,
-    app as aressim_app,
     simulate_step,
+)
+from mars_agent.simulation.aressim import (
+    app as aressim_app,
 )
 from mars_agent.simulation.aressim_adapter import (
     AresSimRunner,

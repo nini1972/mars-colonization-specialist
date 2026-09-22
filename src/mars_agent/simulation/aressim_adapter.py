@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from mars_agent.orchestration.models import MissionGoal, PlanResult
 from mars_agent.simulation.aressim import (

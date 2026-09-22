@@ -7,7 +7,7 @@ Perseverance MEDA, MOXIE telemetry, and SWIM Arcadia Planitia ice datasets.
 from __future__ import annotations
 
 import math
-from typing import Any
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -153,7 +153,7 @@ class PhysicalEngine:
         tau: float,
         use_local_solar_time: bool = True,
     ) -> tuple[float, float, float]:
-        """Compute solar longitude (Ls), zenith angle (theta_z), and global horizontal irradiance (GHI)."""
+        """Compute solar longitude (Ls), zenith angle, and global horizontal irradiance."""
         m = (self.m_0 + self.mean_motion * sol) % 360.0
         e_ecc = self.solve_kepler(m)
         f = 2.0 * math.atan2(
@@ -243,7 +243,8 @@ def simulate_step(request: AresSimStepRequest) -> AresSimStepResponse:
     )
 
 
-    # Local barometric pressure oscillation (MCD v6.1 model: ~750 +/- 100 Pa seasonal, +/- 15 Pa diurnal)
+    # Local barometric pressure oscillation (MCD v6.1 model: ~750 +/- 100 Pa seasonal,
+    # +/- 15 Pa diurnal)
     t_rad = hour_of_sol * math.pi / 12.0
     p_mean = 750.0 + 100.0 * math.sin(math.radians(ls))
     local_pressure_pa = p_mean + 15.0 * math.cos(2.0 * t_rad - 0.8)
@@ -382,7 +383,10 @@ def simulate_step(request: AresSimStepRequest) -> AresSimStepResponse:
 app = FastAPI(
     title="AresSim Engineering Simulation API",
     version="1.5.0",
-    description="Deterministic empirical Mars physical simulation service for multi-agent colony planning.",
+    description=(
+        "Deterministic empirical Mars physical simulation service for multi-agent colony "
+        "planning."
+    ),
 )
 aressim_app = app
 

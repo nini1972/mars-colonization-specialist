@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
-from fastapi.testclient import TestClient
+
 import pytest
+from fastapi.testclient import TestClient
 
 from mars_agent.orchestration import CentralPlanner, MissionGoal, MissionPhase, PlannerSettings
 from mars_agent.simulation.aressim import (
@@ -157,7 +158,8 @@ def test_aressim_runner_nominal_trajectory() -> None:
     assert "effective_generation_kw" in metrics
     assert "hvac_power_demand_kw" in metrics
     assert "isru_power_demand_kw" in metrics
-    assert metrics["effective_generation_kw"].lower <= metrics["effective_generation_kw"].mean <= metrics["effective_generation_kw"].upper
+    gen_metrics = metrics["effective_generation_kw"]
+    assert gen_metrics.lower <= gen_metrics.mean <= gen_metrics.upper
 
 
 def test_aressim_runner_from_central_planner() -> None:

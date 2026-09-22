@@ -3,14 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-import pytest
-
 from mars_agent.mcp.persistence import (
-    IdempotencyEntry,
     PersistenceSnapshot,
     SQLitePersistenceBackend,
 )
-from mars_agent.mcp.telemetry import TelemetryQueryService, TelemetryEventPayload
+from mars_agent.mcp.telemetry import TelemetryQueryService
 
 
 def _snapshot_with_telemetry(

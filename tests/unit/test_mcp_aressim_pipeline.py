@@ -1,5 +1,4 @@
 from datetime import date
-from pathlib import Path
 
 from mars_agent.governance.benchmark import BenchmarkHarness
 from mars_agent.governance.models import BenchmarkReference
@@ -97,14 +96,28 @@ def test_mcp_simulate_with_include_aressim_returns_physical_trajectory() -> None
     assert isinstance(aressim_payload, dict)
     assert aressim_payload["total_steps"] == 24
     assert aressim_payload["duration_sols"] == 1.0
-    assert aressim_payload["peak_solar_generation_kw"] > 0.0
-    assert 0.0 <= aressim_payload["min_bess_soc"] <= 1.0
-    assert aressim_payload["cumulative_o2_g"] > 0.0
-    assert aressim_payload["cumulative_water_kg"] > 0.0
+
+    peak_solar_generation_kw = aressim_payload["peak_solar_generation_kw"]
+    assert isinstance(peak_solar_generation_kw, (int, float))
+    assert peak_solar_generation_kw > 0.0
+
+    min_bess_soc = aressim_payload["min_bess_soc"]
+    assert isinstance(min_bess_soc, (int, float))
+    assert 0.0 <= min_bess_soc <= 1.0
+
+    cumulative_o2_g = aressim_payload["cumulative_o2_g"]
+    assert isinstance(cumulative_o2_g, (int, float))
+    assert cumulative_o2_g > 0.0
+
+    cumulative_water_kg = aressim_payload["cumulative_water_kg"]
+    assert isinstance(cumulative_water_kg, (int, float))
+    assert cumulative_water_kg > 0.0
 
     simulation_payload = sim_result["simulation"]
     assert isinstance(simulation_payload, dict)
-    assert len(simulation_payload["scenarios"]) == 5
+    scenarios = simulation_payload["scenarios"]
+    assert isinstance(scenarios, list)
+    assert len(scenarios) == 5
     assert simulation_payload["aressim_trajectory"] is not None
 
 
