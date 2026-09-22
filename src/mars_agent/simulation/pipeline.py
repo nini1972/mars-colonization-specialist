@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing import TYPE_CHECKING
+
 from mars_agent.orchestration.models import PlanResult
 from mars_agent.simulation.compiler import compile_model
 from mars_agent.simulation.ir import EquationSpec, InterfaceSpec, ModelSpec, VariableSpec
@@ -14,6 +16,9 @@ from mars_agent.simulation.validation import (
     validate_scenario,
     validate_static,
 )
+
+if TYPE_CHECKING:
+    from mars_agent.simulation.aressim_adapter import AresSimTrajectoryReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +40,7 @@ class SimulationReport:
     seed: int
     attempts: int
     scenarios: tuple[ScenarioRunResult, ...]
+    aressim_trajectory: AresSimTrajectoryReport | None = None
 
 
 @dataclass(slots=True)
@@ -43,6 +49,8 @@ class SimulationPipeline:
 
     seed: int = 42
     max_repair_attempts: int = 2
+    include_aressim: bool = False
+    aressim_duration_sols: int = 1
 
     def _extract_metric(self, plan: PlanResult, metric_name: str) -> float:
         for response in plan.subsystem_responses:
@@ -176,9 +184,19 @@ class SimulationPipeline:
             model_spec = self._repair_model(model_spec)
             scenario_runs = self._run_scenarios(model_spec)
 
+        aressim_trajectory = None
+        if self.include_aressim:
+            from mars_agent.simulation.aressim_adapter import AresSimRunner
+
+            aressim_trajectory = AresSimRunner().run_from_plan(
+                plan,
+                duration_sols=self.aressim_duration_sols,
+            )
+
         return SimulationReport(
             model_id=model_spec.model_id,
             seed=self.seed,
             attempts=attempts,
             scenarios=scenario_runs,
+            aressim_trajectory=aressim_trajectory,
         )

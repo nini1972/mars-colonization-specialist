@@ -50,6 +50,8 @@ def to_mcp_value(value: object) -> MCPValue:
         raise TypeError(f"Unsupported enum value type: {type(enum_value).__name__}")
     if isinstance(value, (date, datetime)):
         return value.isoformat()
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
+        return to_mcp_value(getattr(value, "model_dump")())
     if is_dataclass(value):
         return {
             item.name: to_mcp_value(getattr(value, item.name))
@@ -111,6 +113,13 @@ def _optional_int(arguments: Mapping[str, object], key: str, default: int) -> in
     if isinstance(value, int):
         return value
     raise ValueError(f"Argument '{key}' must be an integer")
+
+
+def _optional_bool(arguments: Mapping[str, object], key: str, default: bool) -> bool:
+    value = arguments.get(key, default)
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"Argument '{key}' must be a boolean")
 
 
 def _parse_trust_tier(raw: object) -> TrustTier:
@@ -289,10 +298,22 @@ class MarsMCPAdapter:
                 "max_repair_attempts",
                 self.simulation_pipeline.max_repair_attempts,
             )
+            include_aressim = _optional_bool(
+                arguments,
+                "include_aressim",
+                self.simulation_pipeline.include_aressim,
+            )
+            aressim_duration_sols = _optional_int(
+                arguments,
+                "aressim_duration_sols",
+                self.simulation_pipeline.aressim_duration_sols,
+            )
             return self._simulate(
                 plan_id=plan_id,
                 seed=seed,
                 max_repair_attempts=max_repair_attempts,
+                include_aressim=include_aressim,
+                aressim_duration_sols=aressim_duration_sols,
             )
 
         if tool_name == "mars.governance":
@@ -368,19 +389,29 @@ class MarsMCPAdapter:
         plan_id: str,
         seed: int,
         max_repair_attempts: int,
+        include_aressim: bool = False,
+        aressim_duration_sols: int = 1,
     ) -> dict[str, MCPValue]:
         plan = self._plans.get(plan_id)
         if plan is None:
             raise KeyError(f"Unknown plan_id: {plan_id}")
 
-        pipeline = SimulationPipeline(seed=seed, max_repair_attempts=max_repair_attempts)
+        pipeline = SimulationPipeline(
+            seed=seed,
+            max_repair_attempts=max_repair_attempts,
+            include_aressim=include_aressim,
+            aressim_duration_sols=aressim_duration_sols,
+        )
         simulation = pipeline.run(plan)
         simulation_id = f"simulation-{len(self._simulations) + 1:04d}"
         self._simulations[simulation_id] = simulation
-        return {
+        result: dict[str, MCPValue] = {
             "simulation_id": simulation_id,
             "simulation": to_mcp_value(simulation),
         }
+        if simulation.aressim_trajectory is not None:
+            result["aressim"] = to_mcp_value(simulation.aressim_trajectory)
+        return result
 
     def _governance(
         self,

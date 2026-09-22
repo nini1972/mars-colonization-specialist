@@ -1,0 +1,136 @@
+{
+  "benchmark": {
+    "deltas": [
+      {
+        "delta": 235.0560821755405,
+        "metric": "load_margin_kw",
+        "observed": 250.0560821755405,
+        "source": "Synthetic permissive margin reference",
+        "target": 15.0,
+        "within_tolerance": true
+      },
+      {
+        "delta": 0.4481531723477812,
+        "metric": "resource_surplus_ratio",
+        "observed": 1.6481531723477811,
+        "source": "Synthetic permissive surplus reference",
+        "target": 1.2,
+        "within_tolerance": true
+      },
+      {
+        "delta": 13.826079920948992,
+        "metric": "storage_cover_hours",
+        "observed": 33.82607992094899,
+        "source": "Synthetic permissive storage reference",
+        "target": 20.0,
+        "within_tolerance": true
+      }
+    ],
+    "passed": true
+  },
+  "conflicts": [],
+  "decisions": [
+    {
+      "confidence": 0.9,
+      "evidence": [
+        {
+          "doc_id": "nasa-phase8-001",
+          "source_id": "nasa-std",
+          "title": "Phase 8 MCP transport evidence",
+          "url": "https://example.org/nasa-phase8-001"
+        }
+      ],
+      "gate_accepted": true,
+      "recommendation": "Maintain ECLSS reserve margins with 20% oxygen headroom and high water recycling efficiency.",
+      "subsystem": "eclss"
+    },
+    {
+      "confidence": 0.9,
+      "evidence": [
+        {
+          "doc_id": "nasa-phase8-001",
+          "source_id": "nasa-std",
+          "title": "Phase 8 MCP transport evidence",
+          "url": "https://example.org/nasa-phase8-001"
+        }
+      ],
+      "gate_accepted": true,
+      "recommendation": "Run ISRU at conservative extraction throughput to preserve power margin during uncertain feedstock quality.",
+      "subsystem": "isru"
+    },
+    {
+      "confidence": 0.9,
+      "evidence": [
+        {
+          "doc_id": "nasa-phase8-001",
+          "source_id": "nasa-std",
+          "title": "Phase 8 MCP transport evidence",
+          "url": "https://example.org/nasa-phase8-001"
+        }
+      ],
+      "gate_accepted": true,
+      "recommendation": "Maintain positive load margin and battery coverage through dust events before increasing discretionary loads.",
+      "subsystem": "power"
+    },
+    {
+      "confidence": 0.9,
+      "evidence": [
+        {
+          "doc_id": "nasa-phase8-001",
+          "source_id": "nasa-std",
+          "title": "Phase 8 MCP transport evidence",
+          "url": "https://example.org/nasa-phase8-001"
+        }
+      ],
+      "gate_accepted": true,
+      "recommendation": "Monitor habitat thermal envelope continuously; schedule HVAC maintenance before dust season to protect thermal margins.",
+      "subsystem": "habitat_thermodynamics"
+    }
+  ],
+  "governance": {
+    "accepted": true,
+    "checked_items": 9,
+    "violations": []
+  },
+  "mission_id": "mars-phase8-transport",
+  "next_phase": "scaling",
+  "replan_events": [],
+  "simulation": {
+    "attempts": 2,
+    "model_id": "sim-mars-phase8-transport",
+    "scenarios": [
+      {
+        "issues": [],
+        "name": "nominal",
+        "passed": true,
+        "remediation": []
+      },
+      {
+        "issues": [],
+        "name": "dust_storm",
+        "passed": true,
+        "remediation": []
+      },
+      {
+        "issues": [],
+        "name": "equipment_failure",
+        "passed": true,
+        "remediation": []
+      },
+      {
+        "issues": [],
+        "name": "resupply_delay",
+        "passed": true,
+        "remediation": []
+      },
+      {
+        "issues": [],
+        "name": "medical_emergency",
+        "passed": true,
+        "remediation": []
+      }
+    ],
+    "seed": 42
+  },
+  "started_phase": "early_operations"
+}

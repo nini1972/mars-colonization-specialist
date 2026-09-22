@@ -81,14 +81,29 @@ async def main() -> None:
                     "plan_id": plan_id,
                     "seed": 42,
                     "max_repair_attempts": 2,
+                    "include_aressim": True,
+                    "aressim_duration_sols": 1,
                     "request_id": f"req-{run_id}-sim",
                 },
             )
             sim_payload = _payload(sim_result)
-            print("simulate:", sim_payload)
             if sim_payload is None:
                 print("simulate returned no structured payload", _describe_error(sim_result))
                 return
+
+            print("simulate scenario attempts:", sim_payload.get("simulation", {}).get("attempts"))
+            aressim = sim_payload.get("aressim")
+            if aressim:
+                print("\n================= AresSim Physical Trajectory =================")
+                print(f"Total Steps: {aressim.get('total_steps')} hours (1 Sol)")
+                print(f"Peak Solar PV: {aressim.get('peak_solar_generation_kw')} kW")
+                print(f"Min Battery SoC: {aressim.get('min_bess_soc') * 100:.1f}%")
+                print(f"Final Battery SoC: {aressim.get('final_bess_soc') * 100:.1f}%")
+                print(f"O2 Accumulated: {aressim.get('cumulative_o2_g')} g")
+                print(f"Water Extracted: {aressim.get('cumulative_water_kg')} kg")
+                print(f"Methane Accumulated: {aressim.get('cumulative_methane_g')} g")
+                print(f"HVAC Supplemental Energy: {aressim.get('total_hvac_energy_kwh')} kWh")
+                print("===============================================================\n")
 
             simulation_id = sim_payload.get("simulation_id")
             if not isinstance(simulation_id, str):
@@ -104,17 +119,20 @@ async def main() -> None:
                     "request_id": f"req-{run_id}-gov",
                 },
             )
-            print("governance:", gov_result.structuredContent)
+            gov_payload = _payload(gov_result)
+            print("governance accepted:", gov_payload.get("governance", {}).get("accepted"))
 
             bench_result = await session.call_tool(
                 "mars.benchmark",
                 {
                     "plan_id": plan_id,
                     "simulation_id": simulation_id,
+                    "benchmark_profile": "nasa-esa-mission-review-permissive",
                     "request_id": f"req-{run_id}-bench",
                 },
             )
-            print("benchmark:", bench_result.structuredContent)
+            bench_payload = _payload(bench_result)
+            print("benchmark passed:", bench_payload.get("benchmark", {}).get("passed"))
 
 
 if __name__ == "__main__":

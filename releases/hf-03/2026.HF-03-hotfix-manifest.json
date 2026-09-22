@@ -1,0 +1,18 @@
+{
+  "artifact_provenance": [
+    "configs/knowledge_release_policy.toml",
+    "Synthetic permissive mission review benchmark bundle",
+    "governance.audit_record.v1"
+  ],
+  "benchmark_policy_version": "2026.03-dev",
+  "benchmark_profile": "nasa-esa-mission-review-permissive",
+  "changed_doc_ids": [
+    "doc-0001"
+  ],
+  "created_at": "2026-09-21T21:50:17.041916+00:00",
+  "governance_policy_version": "knowledge-release-policy.v1",
+  "notes": "Arcadia Planitia early ops baseline validation",
+  "rationale_type": "hotfix_reason",
+  "release_type": "hotfix",
+  "version": "2026.HF-03"
+}

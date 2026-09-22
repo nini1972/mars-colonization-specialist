@@ -21,6 +21,7 @@ from mars_agent.governance import GovernanceGate
 from mars_agent.mcp.adapter import (
     MarsMCPAdapter,
     MCPValue,
+    _optional_bool,
     _optional_float,
     _optional_int,
     _optional_string,
@@ -1131,13 +1132,28 @@ async def _invoke_runtime_tool(
             "max_repair_attempts",
             _adapter.simulation_pipeline.max_repair_attempts,
         )
+        include_aressim = _optional_bool(
+            arguments,
+            "include_aressim",
+            _adapter.simulation_pipeline.include_aressim,
+        )
+        aressim_duration_sols = _optional_int(
+            arguments,
+            "aressim_duration_sols",
+            _adapter.simulation_pipeline.aressim_duration_sols,
+        )
         plan_result = _adapter._plans.get(plan_id)
         if plan_result is None:
             raise KeyError(f"Unknown plan_id: {plan_id}")
         plan = plan_result
 
         def _compute_simulation() -> SimulationReport:
-            pipeline = SimulationPipeline(seed=seed, max_repair_attempts=max_repair_attempts)
+            pipeline = SimulationPipeline(
+                seed=seed,
+                max_repair_attempts=max_repair_attempts,
+                include_aressim=include_aressim,
+                aressim_duration_sols=aressim_duration_sols,
+            )
             return pipeline.run(plan)
 
         simulation: SimulationReport = await _run_bounded_sync(
@@ -1146,10 +1162,13 @@ async def _invoke_runtime_tool(
         )
         simulation_id = f"simulation-{len(_adapter._simulations) + 1:04d}"
         _adapter._simulations[simulation_id] = simulation
-        return {
+        response_payload: dict[str, object] = {
             "simulation_id": simulation_id,
             "simulation": cast(object, to_mcp_value(simulation)),
         }
+        if simulation.aressim_trajectory is not None:
+            response_payload["aressim"] = cast(object, to_mcp_value(simulation.aressim_trajectory))
+        return response_payload
 
     if tool_name == "mars.governance":
         plan_id = _require_string(arguments, "plan_id")
@@ -1502,6 +1521,8 @@ async def mars_simulate(
     plan_id: str,
     seed: int = 42,
     max_repair_attempts: int = 3,
+    include_aressim: bool = False,
+    aressim_duration_sols: int = 1,
     request_id: str | None = None,
     auth_token: str | None = None,
 ) -> dict[str, object]:
@@ -1513,6 +1534,8 @@ async def mars_simulate(
             "plan_id": plan_id,
             "seed": seed,
             "max_repair_attempts": max_repair_attempts,
+            "include_aressim": include_aressim,
+            "aressim_duration_sols": aressim_duration_sols,
         },
         request_id=request_id,
         auth_token=auth_token,
