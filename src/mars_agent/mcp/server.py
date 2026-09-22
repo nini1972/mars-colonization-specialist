@@ -673,6 +673,15 @@ def _record_metric(
         bucket["failures"] += 1.0
         if auth_failure:
             bucket["auth_failures"] += 1.0
+    # Persistence is intentionally deferred here rather than triggered by every
+    # metric update (see _record_specialist_metric, _record_plan_runtime_metric,
+    # _record_negotiation_session below): _record_metric is called exactly once
+    # per completed tool invocation (success or failure), after any specialist
+    # or negotiation metrics for that same invocation have already been updated
+    # in memory. Persisting once here -- instead of once per specialist/session
+    # -- captures the same final state while avoiding an O(request_count)
+    # full-snapshot rewrite per specialist call, which otherwise makes runtime
+    # persistence cost scale quadratically with total requests served.
     _persist_runtime_snapshot_best_effort()
 
 
@@ -694,12 +703,15 @@ def _record_specialist_metric(timing: SpecialistTiming) -> None:
             bucket["gate_fail"] += 1.0
             bucket["last_gate_accepted"] = 0.0
     bucket["last_latency_ms"] = timing.latency_ms
-    _persist_runtime_snapshot_best_effort()
+    # No persist here: this fires once per specialist (up to 4x per mars.plan
+    # call). The enclosing request's _record_metric call persists the final,
+    # combined state once the whole invocation completes.
 
 
 def _record_negotiation_session(payload: Mapping[str, object]) -> None:
     _TELEMETRY.record_negotiation_session(payload)
-    _persist_runtime_snapshot_best_effort()
+    # No persist here: the enclosing mars.plan invocation's _record_metric
+    # call persists this update along with the rest of the request's state.
 
 
 _adapter.planner.negotiation_observer = _record_negotiation_session
@@ -714,7 +726,9 @@ def _record_plan_runtime_metric(*, async_runtime: bool) -> None:
         bucket["async_calls"] += 1.0
     else:
         bucket["sync_calls"] += 1.0
-    _persist_runtime_snapshot_best_effort()
+    # No persist here: the enclosing mars.plan invocation's _record_metric
+    # call persists this update along with the rest of the request's state.
+
 
 
 def _emit_observability_log(
